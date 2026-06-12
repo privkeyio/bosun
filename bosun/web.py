@@ -34,6 +34,7 @@ def _entry_dict(e) -> dict:
     d["nacks"] = status.get("nacks") if status else None
     d["pr_title"] = status.get("title") if status else None
     d["updated_at"] = status.get("updated_at") if status else None
+    d["fetched"] = status.get("fetched") if status else None
     return d
 
 
@@ -76,7 +77,7 @@ def api_pr():
     if not repo or not num:
         return jsonify(error="repo and num required"), 400
     try:
-        return jsonify(pr_status(repo, num))
+        return jsonify(pr_status(repo, num, refresh=request.args.get("refresh") == "1"))
     except RateLimited as e:
         return jsonify(error=str(e)), 429
     except Exception as e:
@@ -130,7 +131,10 @@ _PAGE = """<!doctype html>
   .insights .ins { padding: .05rem .4rem; border-radius: .6rem; background: #8888882a; }
   .insights .ins.merged { background:#7c3aed44 } .insights .ins.open { background:#2a8a2a44 }
   .insights .ins.nack { background:#c0303044 }
+  .insights .ins { cursor: pointer; } .insights .ins:hover { outline: 1px solid currentColor; }
   .age { opacity: .65; font-size: .85em; white-space: nowrap; }
+  tr.drop td { opacity: .45; } tr.drop:hover td { opacity: .7; }
+  .empty { text-align: center; padding: 1.5rem; opacity: .6; }
 </style></head><body>
 <h1>bosun</h1>
 <div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
@@ -153,7 +157,10 @@ _PAGE = """<!doctype html>
   <input type="search" id="q" placeholder="search name / PR / status…">
   <select id="sect"><option value="">all sections</option></select>
   <label><input type="checkbox" id="merges" checked> merges only</label>
-  <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown (cached after)">fetch GitHub status (shown)</button>
+  <label title="Automatically fetch GitHub status for rows as you filter"><input type="checkbox" id="auto"> auto-fetch</label>
+  <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown (cached after)">fetch status (shown)</button>
+  <button id="refresh" title="Re-fetch shown rows from GitHub, ignoring the cache">↻ refresh</button>
+  <button id="exportcsv" title="Download the shown rows as CSV">export CSV</button>
 </div>
 
 <table><thead><tr>
@@ -174,7 +181,7 @@ const prLink = d => d.url
   ? `<a href="${d.url}" target="_blank"${d.pr_title ? ` title="${esc(d.pr_title)}"` : ""}>${esc(d.prnum)}</a>`
   : esc(d.prnum || "");
 
-const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set() };
+const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), nack: new Set() };
 const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level }[kind]);
 
 function setData(arr) {
@@ -238,19 +245,32 @@ function syncChips() {
     el.classList.toggle("on", selSet(el.dataset.kind).has(el.dataset.val)));
 }
 
+function applyFilter(spec) {
+  Object.values(sel).forEach(s => s.clear());
+  $("#q").value = ""; $("#sect").value = ""; $("#merges").checked = true;
+  for (const k of ["states", "prstate", "level", "buckets", "nack"])
+    (spec[k] || []).forEach(v => sel[k].add(String(v)));
+  syncChips(); render();
+}
+
 function insights() {
   const cand = DATA.filter(d => d.kind === "merge" && !d.active);
   const known = cand.filter(d => d.pr_state);
   const n = s => known.filter(d => d.pr_state === s).length;
   const unrev = known.filter(d => !d.review_level).length;
   const nacked = known.filter(d => d.nacks > 0).length;
-  $("#insights").innerHTML = cand.length
-    ? `candidates: <b>${cand.length}</b> · status known: ${known.length}/${cand.length}`
-      + ` · <span class="ins merged">merged upstream: ${n("merged")}</span>`
-      + ` · <span class="ins open">open: ${n("open")}</span> · closed: ${n("closed")}`
-      + ` · <span class="ins">0 reviews: ${unrev}</span>`
-      + (nacked ? ` · <span class="ins nack">NACKed: ${nacked}</span>` : "")
-    : "";
+  const ins = (cls, label, f) => `<span class="ins ${cls}" data-f='${JSON.stringify(f)}'>${label}</span>`;
+  $("#insights").innerHTML = cand.length ? [
+    `candidates: <b>${cand.length}</b>`,
+    `status known: ${known.length}/${cand.length}`,
+    ins("merged", "merged upstream: " + n("merged"), { states: ["cand"], prstate: ["merged"] }),
+    ins("open", "open: " + n("open"), { states: ["cand"], prstate: ["open"] }),
+    ins("", "closed: " + n("closed"), { states: ["cand"], prstate: ["closed"] }),
+    ins("", "0 reviews: " + unrev, { states: ["cand"], level: ["0"] }),
+    nacked ? ins("nack", "NACKed: " + nacked, { states: ["cand"], nack: [1] }) : "",
+  ].filter(Boolean).join(" · ") : "";
+  $("#insights").querySelectorAll("[data-f]").forEach(el =>
+    el.onclick = () => applyFilter(JSON.parse(el.dataset.f)));
 }
 
 function ago(iso) {
@@ -268,8 +288,9 @@ function saveState() {
     localStorage.setItem(LS, JSON.stringify({
       repo: $("#repo").value, ref: $("#ref").value, spec: $("#spec").value,
       q: $("#q").value, sect: $("#sect").value, merges: $("#merges").checked,
-      sortKey, sortDir, buckets: [...sel.buckets], states: [...sel.states],
-      prstate: [...sel.prstate], level: [...sel.level],
+      auto: $("#auto").checked, sortKey, sortDir,
+      buckets: [...sel.buckets], states: [...sel.states],
+      prstate: [...sel.prstate], level: [...sel.level], nack: [...sel.nack],
     }));
   } catch (e) {}
 }
@@ -280,9 +301,11 @@ function restoreState() {
   if (st.ref) $("#ref").value = st.ref;
   if (st.q) $("#q").value = st.q;
   if (typeof st.merges === "boolean") $("#merges").checked = st.merges;
+  if (typeof st.auto === "boolean") $("#auto").checked = st.auto;
   if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
   sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
   sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
+  sel.nack = new Set(st.nack || []);
   return st;
 }
 
@@ -303,6 +326,7 @@ function filtered() {
     if (sel.states.size && !sel.states.has(d.active ? "active" : "cand")) return false;
     if (sel.prstate.size && !sel.prstate.has(d.pr_state)) return false;
     if (sel.level.size && !sel.level.has(String(d.review_level))) return false;
+    if (sel.nack.size && !(d.nacks > 0)) return false;
     if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""} ${d.pr_title||""}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -323,7 +347,11 @@ function render() {
   updateSortIndicators();
   const rows = filtered();
   $("#shown").textContent = `${rows.length} shown`;
-  $("#rows").innerHTML = rows.map(d => `<tr>
+  if (!rows.length) {
+    $("#rows").innerHTML = '<tr><td colspan="10" class="empty">no rows match — adjust filters or clear them</td></tr>';
+    saveState(); return;
+  }
+  $("#rows").innerHTML = rows.map(d => `<tr class="${!d.active && d.pr_state === 'merged' ? 'drop' : ''}">
     <td>${d.active ? '<span class="dot on">●</span>' : '<span class="dot">○</span>'}</td>
     <td>${esc(d.section)}</td>
     <td>${prLink(d)}</td>
@@ -336,22 +364,30 @@ function render() {
     <td>${d.upstream ? `<code>${esc(d.last||"")}</code> ${esc(d.upstream)}` : ""}</td>
   </tr>`).join("");
   saveState();
+  maybeAutoFetch();
 }
 
-async function fetchGh() {
-  const todo = filtered().filter(d => d.url && d.pr_state == null);
+let fetching = false;
+async function fetchGh(force = false, auto = false) {
+  if (fetching) return;
+  const todo = filtered().filter(d => d.url && (force || d.pr_state == null));
   const cap = 80;
   const list = todo.slice(0, cap);
-  if (!list.length) { $("#status").textContent = "nothing to fetch (shown rows already loaded or have no PR)"; return; }
+  if (!list.length) {
+    if (!auto) $("#status").textContent = "nothing to fetch (shown rows already loaded or have no PR)";
+    return;
+  }
+  fetching = true;
   let done = 0, stop = false;
   const q = [...list];
   const note = todo.length > cap ? ` (capped at ${cap} of ${todo.length})` : "";
+  const refresh = force ? "&refresh=1" : "";
   async function worker() {
     while (q.length && !stop) {
       const d = q.shift();
       const m = d.url.match(/github\\.com\\/([^/]+\\/[^/]+)\\/pull\\/(\\d+)/);
       try {
-        const r = await fetch(`/api/pr?repo=${encodeURIComponent(m[1])}&num=${m[2]}`);
+        const r = await fetch(`/api/pr?repo=${encodeURIComponent(m[1])}&num=${m[2]}${refresh}`);
         const j = await r.json();
         if (r.status === 429) { stop = true; $("#status").textContent = "rate limited — set GITHUB_TOKEN or use gh auth. " + (j.error||""); return; }
         if (r.ok) DATA.filter(x => x.prnum === d.prnum).forEach(x => {
@@ -363,9 +399,29 @@ async function fetchGh() {
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
+  fetching = false;
   if (!stop) $("#status").textContent = `done (${done}${note})`;
   buildLegend();  // refresh PR-state / review-level facet counts + insights
   render();
+}
+
+let autoTimer;
+function maybeAutoFetch() {
+  if (!$("#auto").checked || fetching) return;
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => fetchGh(false, true), 500);
+}
+
+function exportCsv() {
+  const cols = ["active", "section", "prnum", "name", "status_norm", "status",
+                "pr_state", "review_level", "acks", "nacks", "updated_at", "commit", "upstream"];
+  const cell = v => { v = v == null ? "" : String(v); return /[",\\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const rows = filtered();
+  const csv = [cols.join(",")].concat(rows.map(d => cols.map(c => cell(d[c])).join(","))).join("\\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = ($("#spec").value || "bosun").replace(/[^a-z0-9.-]/gi, "_") + ".csv";
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 async function loadSpecs(prefer) {
@@ -420,8 +476,16 @@ $("#loadspecs").onclick = () => loadSpecs();
 $("#go").onclick = loadUrl;
 $("#url").addEventListener("keydown", e => { if (e.key === "Enter") loadUrl(); });
 $("#url").addEventListener("paste", () => setTimeout(loadUrl, 0));
-$("#fetchgh").onclick = fetchGh;
+$("#fetchgh").onclick = () => fetchGh(false);
+$("#refresh").onclick = () => fetchGh(true);
+$("#exportcsv").onclick = exportCsv;
+$("#auto").addEventListener("change", () => { saveState(); maybeAutoFetch(); });
 $("#spec").addEventListener("change", loadEntries);
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+    e.preventDefault(); $("#q").focus();
+  }
+});
 
 const _saved = restoreState();
 pendingSect = (_saved && _saved.sect) || null;
