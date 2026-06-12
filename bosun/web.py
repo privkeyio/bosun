@@ -95,7 +95,8 @@ _PAGE = """<!doctype html>
   .controls { position: sticky; top: 0; background: Canvas; padding: .5rem 0; z-index: 2; }
   input, select, button { font: inherit; padding: .3rem .5rem; }
   input[type=search] { min-width: 16rem; }
-  #repo { min-width: 12rem; } #ref { min-width: 8rem; }
+  #url { min-width: 24rem; flex: 1; } #repo { min-width: 11rem; } #ref { min-width: 8rem; }
+  .source.row2 { opacity: .8; font-size: .9em; }
   .legend { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .25rem 0 .6rem; }
   .legend .lbl, .legend .sep { opacity: .55; font-size: .78rem; margin: 0 .15rem; }
   .legend .chip { cursor: pointer; border: 1px solid #8884; }
@@ -127,10 +128,14 @@ _PAGE = """<!doctype html>
 <div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
 
 <div class="source">
+  <input id="url" type="url" placeholder="paste a GitHub spec URL, e.g. https://github.com/luke-jr/tmp/blob/knots-spec/knots-next-29.spec">
+  <button id="go">load</button>
+  <label>spec <select id="spec"></select></label>
+</div>
+<div class="source row2">
   <label>repo <input id="repo" value="%%REPO%%"></label>
   <label>ref <input id="ref" value="%%REF%%"></label>
-  <button id="loadspecs">load</button>
-  <label>spec <select id="spec"></select></label>
+  <button id="loadspecs">list specs</button>
 </div>
 
 <div class="legend" id="legend"></div>
@@ -284,7 +289,7 @@ async function fetchGh() {
   render();
 }
 
-async function loadSpecs() {
+async function loadSpecs(prefer) {
   const repo = $("#repo").value.trim(), ref = $("#ref").value.trim();
   $("#status").textContent = "loading spec list…";
   try {
@@ -294,10 +299,23 @@ async function loadSpecs() {
     const prev = $("#spec").value;
     $("#spec").innerHTML = j.specs.map(s => `<option>${esc(s)}</option>`).join("");
     const def = j.specs.find(s => s.includes("knots-next-29")) || j.specs.find(s => s.includes("next")) || j.specs[j.specs.length-1];
-    $("#spec").value = j.specs.includes(prev) ? prev : (def || "");
+    $("#spec").value = (prefer && j.specs.includes(prefer)) ? prefer
+      : (j.specs.includes(prev) ? prev : (def || ""));
     $("#status").textContent = "";
     loadEntries();
   } catch (e) { $("#status").textContent = "error: " + e.message; }
+}
+
+// Accepts github.com/<owner>/<repo>/blob/<ref>/<path> or the raw.githubusercontent.com form.
+function loadUrl() {
+  const u = $("#url").value.trim();
+  if (!u) return;
+  const m = u.match(/github\\.com\\/([^/]+\\/[^/]+)\\/blob\\/([^/]+)\\/(.+?)(?:[?#].*)?$/)
+        || u.match(/raw\\.githubusercontent\\.com\\/([^/]+\\/[^/]+)\\/([^/]+)\\/(.+?)(?:[?#].*)?$/);
+  if (!m) { $("#status").textContent = "couldn't parse that — expected …/blob/<ref>/<file>.spec"; return; }
+  $("#repo").value = m[1];
+  $("#ref").value = m[2];
+  loadSpecs(decodeURIComponent(m[3]));
 }
 
 async function loadEntries() {
@@ -319,7 +337,10 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
 ["q","sect","merges"].forEach(id => {
   const el = $("#"+id); el.addEventListener(el.type === "checkbox" ? "change" : "input", render);
 });
-$("#loadspecs").onclick = loadSpecs;
+$("#loadspecs").onclick = () => loadSpecs();
+$("#go").onclick = loadUrl;
+$("#url").addEventListener("keydown", e => { if (e.key === "Enter") loadUrl(); });
+$("#url").addEventListener("paste", () => setTimeout(loadUrl, 0));
 $("#fetchgh").onclick = fetchGh;
 $("#spec").addEventListener("change", loadEntries);
 loadSpecs();
