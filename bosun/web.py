@@ -10,34 +10,28 @@ with a picker to switch the spec file or point at your own fork.
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict
 
 from flask import Flask, Response, jsonify, request
 
 from . import source
+from .github import RateLimited, _read_cache, pr_status, pr_url, resolve_pr
 from .spec import parse_spec
 
 app = Flask(__name__)
 app.config["DEFAULT_REPO"] = source.DEFAULT_REPO
 app.config["DEFAULT_REF"] = source.DEFAULT_REF
 
-_REPO_BY_PREFIX = {"": "bitcoin/bitcoin", "k": "bitcoinknots/bitcoin", "g": "bitcoin-core/gui"}
-
-
-def pr_url(prnum: str | None) -> str | None:
-    if not prnum:
-        return None
-    m = re.match(r"^([A-Za-z]?)(\d+)$", prnum)
-    if not m:
-        return None
-    repo = _REPO_BY_PREFIX.get(m.group(1).lower())
-    return f"https://github.com/{repo}/pull/{m.group(2)}" if repo else None
-
 
 def _entry_dict(e) -> dict:
     d = asdict(e)
     d["url"] = pr_url(e.prnum)
+    r = resolve_pr(e.prnum)
+    status = _read_cache(*r) if r else None  # cache-only; no network on page load
+    d["pr_state"] = status.get("state") if status else None
+    d["review_level"] = status.get("review_level") if status else None
+    d["acks"] = status.get("acks") if status else None
+    d["nacks"] = status.get("nacks") if status else None
     return d
 
 
@@ -73,6 +67,20 @@ def api_entries():
         return jsonify(error=str(e)), 502
 
 
+@app.get("/api/pr")
+def api_pr():
+    repo = request.args.get("repo")
+    num = request.args.get("num", type=int)
+    if not repo or not num:
+        return jsonify(error="repo and num required"), 400
+    try:
+        return jsonify(pr_status(repo, num))
+    except RateLimited as e:
+        return jsonify(error=str(e)), 429
+    except Exception as e:
+        return jsonify(error=str(e)), 502
+
+
 _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -101,6 +109,11 @@ _PAGE = """<!doctype html>
   .n-needs-concept{background:#7c3aed55} .n-needs-work{background:#c8881155}
   .n-triage{background:#88888855} .n-deferred{background:#0d948855}
   .n-wontfix{background:#c0303055} .n-other,.n-untagged{background:#8888882a}
+  .st { font-size: .78em; padding: .05rem .4rem; border-radius: .6rem; }
+  .st-merged{background:#7c3aed55} .st-open{background:#2a8a2a55}
+  .st-closed{background:#c0303055} .st-missing,.st-unknown{background:#8888882a}
+  .lv { font-size: .78em; padding: .05rem .35rem; border-radius: .5rem; background:#8888882a; }
+  .lv2 { background:#c8881144 } .lv3 { background:#2a8a2a55 } .nackt { color:#c03030 }
   #status { opacity: .7; font-style: italic; }
 </style></head><body>
 <h1>bosun</h1>
@@ -135,13 +148,15 @@ _PAGE = """<!doctype html>
     <option value="cand">candidates only</option>
   </select>
   <label><input type="checkbox" id="merges" checked> merges only</label>
+  <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown (cached after)">fetch GitHub status (shown)</button>
 </div>
 
 <table><thead><tr>
   <th data-k="active">●</th><th data-k="section">section</th>
   <th data-k="prnum">PR</th><th data-k="name">name</th>
-  <th data-k="status_norm">disposition</th><th data-k="commit">commit</th>
-  <th data-k="upstream">upstream</th>
+  <th data-k="status_norm">disposition</th>
+  <th data-k="pr_state">PR state</th><th data-k="review_level">review</th>
+  <th data-k="commit">commit</th><th data-k="upstream">upstream</th>
 </tr></thead><tbody id="rows"></tbody></table>
 
 <script>
@@ -166,7 +181,7 @@ function setData(arr) {
   render();
 }
 
-function render() {
+function filtered() {
   const q = $("#q").value.toLowerCase(), sect = $("#sect").value,
         norm = $("#norm").value, state = $("#state").value, mergesOnly = $("#merges").checked;
   let rows = DATA.filter(d => {
@@ -180,6 +195,19 @@ function render() {
   });
   rows.sort((a, b) => ((a[sortKey] ?? "") + "").localeCompare((b[sortKey] ?? "") + "",
     undefined, {numeric: true}) * sortDir);
+  return rows;
+}
+
+function reviewCell(d) {
+  if (d.review_level == null) return "";
+  let s = `<span class="lv lv${d.review_level}">L${d.review_level}</span>`;
+  if (d.acks) s += ` ${d.acks} ACK`;
+  if (d.nacks) s += ` <span class="nackt">${d.nacks} NACK</span>`;
+  return s;
+}
+
+function render() {
+  const rows = filtered();
   $("#shown").textContent = `${rows.length} shown`;
   $("#rows").innerHTML = rows.map(d => `<tr>
     <td>${d.active ? '<span class="dot on">●</span>' : '<span class="dot">○</span>'}</td>
@@ -187,9 +215,39 @@ function render() {
     <td>${prLink(d)}</td>
     <td>${esc(d.name)}</td>
     <td><span class="chip n-${d.status_norm}">${d.status_norm}</span> <span class="raw">${esc(d.status||"")}</span></td>
+    <td>${d.pr_state ? `<span class="st st-${d.pr_state}">${d.pr_state}</span>` : ""}</td>
+    <td>${reviewCell(d)}</td>
     <td><code>${esc(d.commit||"")}</code></td>
     <td>${d.upstream ? `<code>${esc(d.last||"")}</code> ${esc(d.upstream)}` : ""}</td>
   </tr>`).join("");
+}
+
+async function fetchGh() {
+  const todo = filtered().filter(d => d.url && d.pr_state == null);
+  const cap = 80;
+  const list = todo.slice(0, cap);
+  if (!list.length) { $("#status").textContent = "nothing to fetch (shown rows already loaded or have no PR)"; return; }
+  let done = 0, stop = false;
+  const q = [...list];
+  const note = todo.length > cap ? ` (capped at ${cap} of ${todo.length})` : "";
+  async function worker() {
+    while (q.length && !stop) {
+      const d = q.shift();
+      const m = d.url.match(/github\\.com\\/([^/]+\\/[^/]+)\\/pull\\/(\\d+)/);
+      try {
+        const r = await fetch(`/api/pr?repo=${encodeURIComponent(m[1])}&num=${m[2]}`);
+        const j = await r.json();
+        if (r.status === 429) { stop = true; $("#status").textContent = "rate limited — set GITHUB_TOKEN or use gh auth. " + (j.error||""); return; }
+        if (r.ok) DATA.filter(x => x.prnum === d.prnum).forEach(x => {
+          x.pr_state = j.state; x.review_level = j.review_level; x.acks = j.acks; x.nacks = j.nacks;
+        });
+      } catch (e) {}
+      $("#status").textContent = `fetching ${++done}/${list.length}${note}…`;
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (!stop) $("#status").textContent = `done (${done}${note})`;
+  render();
 }
 
 async function loadSpecs() {
@@ -228,6 +286,7 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   const el = $("#"+id); el.addEventListener(el.type === "checkbox" ? "change" : "input", render);
 });
 $("#loadspecs").onclick = loadSpecs;
+$("#fetchgh").onclick = fetchGh;
 $("#spec").addEventListener("change", loadEntries);
 loadSpecs();
 </script></body></html>"""

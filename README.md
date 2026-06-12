@@ -23,9 +23,13 @@ The core (`spec` / `source` / `ack`) is pure stdlib; only the web UI needs Flask
 - **`bosun/ack.py`** — classifies PR comment text into review signals
   (concept / utACK / tested-ACK / NACK) and reduces a PR's signals to a 0-3
   review level. Adapted from Pierre Rochard's bitcoin-acks (MIT).
+- **`bosun/github.py`** — fetches live PR status (state + 0-3 ACK level) for the
+  PRs a spec references, with on-disk caching and rate-limit handling. Uses
+  `GITHUB_TOKEN`, falling back to `gh auth token`.
 - **`bosun/web.py`** — a Flask app: pick any spec from the default repo, or
   point `repo`/`ref` at your own fork. Sortable, filterable table with canonical
-  status buckets and PR numbers linked to the right fork's GitHub.
+  status buckets, PR links to the right fork's GitHub, and a button to pull live
+  PR state + review level for the rows shown.
 
 ## Usage
 
@@ -40,8 +44,16 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 Open the page, pick a spec from the dropdown (defaults to `luke-jr/tmp` @
-`knots-spec`), or change `repo`/`ref` to browse your own fork's specs. Set
-`GITHUB_TOKEN` in the environment to raise the API rate limit.
+`knots-spec`), or change `repo`/`ref` to browse your own fork's specs. Click
+**fetch GitHub status (shown)** to pull live PR state + review level for the
+visible rows. Set `GITHUB_TOKEN` (or be logged in via `gh`) to raise the API
+rate limit above 60/hour.
+
+Bulk-prefetch into the cache instead of clicking (recommended for a whole spec):
+
+```bash
+.venv/bin/python -m bosun.github --file knots-next-29.spec   # all referenced PRs
+```
 
 ### CLI (pure stdlib, no install)
 
@@ -58,17 +70,16 @@ python3 -m bosun.spec testdata/knots-next-29.spec --json
 
 ## Roadmap
 
-1. **Status normalization** — the real spec has ~200 distinct freeform
-   disposition strings; map them to a small canonical enum
-   (needs-concept / needs-review / needs-work / triage / wontfix / deferred).
-2. **GitHub ingestion** — pull PRs + comments for the tracked repos and derive
-   the 0-3 review level via `ack.py` (reference: bitcoin-acks GraphQL queries).
-3. **Reconcile spec + GitHub** — the spec is the curated triage state; GitHub
-   is the raw review signal. The value is merging them.
-4. **Cross-fork matrix** — same PR/patch, its review + merge status across
-   every tracked fork. The "compare a variety of forks" view.
-5. **Persistence + richer UI** — a store behind the viewer and a fuller
-   dashboard (the current `web.py` is a read-only, spec-only starting point).
+- [x] **Status normalization** — collapse the ~200 freeform disposition strings
+  into canonical buckets.
+- [x] **GitHub ingestion** — live PR state + 0-3 review level via `github.py`,
+  shown next to the spec's triage tags.
+- [ ] **Tighten normalization** — the `other`/`untagged` buckets can be reduced.
+- [ ] **Review via PR reviews too** — also parse the `/pulls/{n}/reviews`
+  endpoint, not just top-level issue comments.
+- [ ] **Cross-fork matrix** — same PR/patch, its review + merge status across
+  every tracked fork. The "compare a variety of forks" view.
+- [ ] **Persistence + richer UI** — a store behind the viewer, history over time.
 
 ## License
 
