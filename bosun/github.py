@@ -27,6 +27,7 @@ API = "https://api.github.com"
 PR_REPO_BY_PREFIX = {"": "bitcoin/bitcoin", "k": "bitcoinknots/bitcoin", "g": "bitcoin-core/gui"}
 CACHE_DIR = Path(os.environ.get("BOSUN_CACHE", ".bosun-cache"))
 CACHE_TTL = int(os.environ.get("BOSUN_CACHE_TTL", str(24 * 3600)))
+CACHE_VERSION = 2  # bump to invalidate cached entries with an older schema
 
 _token_cache: str | None = None
 
@@ -89,9 +90,11 @@ def _read_cache(repo: str, num: int) -> dict | None:
     p = _cache_path(repo, num)
     if p.exists() and (time.time() - p.stat().st_mtime) < CACHE_TTL:
         try:
-            return json.loads(p.read_text())
+            data = json.loads(p.read_text())
         except (OSError, ValueError):
             return None
+        if data.get("v") == CACHE_VERSION:
+            return data
     return None
 
 
@@ -106,13 +109,15 @@ def pr_status(repo: str, num: int, refresh: bool = False) -> dict:
         pr = _get(f"{API}/repos/{repo}/pulls/{num}")
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            data = {"repo": repo, "num": num, "state": "missing"}
+            data = {"v": CACHE_VERSION, "repo": repo, "num": num, "state": "missing"}
             _write_cache(repo, num, data)
             return data
         raise
 
     author = (pr.get("user") or {}).get("login")
     by_author: dict[str, ReviewSignal] = {}
+
+    # Top-level issue comments (where most Bitcoin ACKs live).
     page = 1
     while True:
         comments = _get(f"{API}/repos/{repo}/issues/{num}/comments?per_page=100&page={page}")
@@ -123,10 +128,26 @@ def pr_status(repo: str, num: int, refresh: bool = False) -> dict:
         if len(comments) < 100:
             break
         page += 1
+
+    # Formal PR reviews: parse the body, and treat a bare APPROVE as a utACK.
+    page = 1
+    while True:
+        reviews = _get(f"{API}/repos/{repo}/pulls/{num}/reviews?per_page=100&page={page}")
+        for rv in reviews:
+            sig = classify_comment(rv.get("body") or "")
+            if sig == ReviewSignal.NONE and rv.get("state") == "APPROVED":
+                sig = ReviewSignal.UNTESTED_ACK
+            if sig != ReviewSignal.NONE:
+                by_author[(rv.get("user") or {}).get("login")] = sig
+        if len(reviews) < 100:
+            break
+        page += 1
+
     by_author.pop(author, None)  # ignore self-ACKs
 
     acks = [s for s in by_author.values() if s > 0]
     data = {
+        "v": CACHE_VERSION,
         "repo": repo, "num": num,
         "state": "merged" if pr.get("merged_at") else pr.get("state"),
         "merged": bool(pr.get("merged_at")),
@@ -134,6 +155,7 @@ def pr_status(repo: str, num: int, refresh: bool = False) -> dict:
         "acks": len(acks),
         "nacks": sum(1 for s in by_author.values() if s == ReviewSignal.NACK),
         "title": pr.get("title"),
+        "updated_at": pr.get("updated_at"),
         "fetched": int(time.time()),
     }
     _write_cache(repo, num, data)

@@ -32,6 +32,8 @@ def _entry_dict(e) -> dict:
     d["review_level"] = status.get("review_level") if status else None
     d["acks"] = status.get("acks") if status else None
     d["nacks"] = status.get("nacks") if status else None
+    d["pr_title"] = status.get("title") if status else None
+    d["updated_at"] = status.get("updated_at") if status else None
     return d
 
 
@@ -123,6 +125,12 @@ _PAGE = """<!doctype html>
   .lv { font-size: .78em; padding: .05rem .35rem; border-radius: .5rem; background:#8888882a; }
   .lv2 { background:#c8881144 } .lv3 { background:#2a8a2a55 } .nackt { color:#c03030 }
   #status { opacity: .7; font-style: italic; }
+  .insights { font-size: .85rem; margin: .1rem 0 .7rem; opacity: .9; }
+  .insights b { font-weight: 600; }
+  .insights .ins { padding: .05rem .4rem; border-radius: .6rem; background: #8888882a; }
+  .insights .ins.merged { background:#7c3aed44 } .insights .ins.open { background:#2a8a2a44 }
+  .insights .ins.nack { background:#c0303044 }
+  .age { opacity: .65; font-size: .85em; white-space: nowrap; }
 </style></head><body>
 <h1>bosun</h1>
 <div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
@@ -139,6 +147,7 @@ _PAGE = """<!doctype html>
 </div>
 
 <div class="legend" id="legend"></div>
+<div class="insights" id="insights"></div>
 
 <div class="controls">
   <input type="search" id="q" placeholder="search name / PR / status…">
@@ -152,23 +161,28 @@ _PAGE = """<!doctype html>
   <th data-k="prnum">PR</th><th data-k="name">name</th>
   <th data-k="status_norm">disposition</th>
   <th data-k="pr_state">PR state</th><th data-k="review_level">review</th>
+  <th data-k="updated_at">age</th>
   <th data-k="commit">commit</th><th data-k="upstream">upstream</th>
 </tr></thead><tbody id="rows"></tbody></table>
 
 <script>
-let DATA = [], sortKey = "section", sortDir = 1;
+let DATA = [], sortKey = "section", sortDir = 1, pendingSect = null;
 const $ = s => document.querySelector(s);
 const esc = s => (s == null ? "" : String(s)).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const prLink = d => d.url ? `<a href="${d.url}" target="_blank">${esc(d.prnum)}</a>` : esc(d.prnum || "");
+const prLink = d => d.url
+  ? `<a href="${d.url}" target="_blank"${d.pr_title ? ` title="${esc(d.pr_title)}"` : ""}>${esc(d.prnum)}</a>`
+  : esc(d.prnum || "");
 
-const sel = { buckets: new Set(), states: new Set() };
+const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set() };
+const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level }[kind]);
 
 function setData(arr) {
   DATA = arr;
   const secs = [...new Set(DATA.filter(d => d.section).map(d => d.section))].sort();
   $("#sect").innerHTML = '<option value="">all sections</option>'
     + secs.map(s => `<option>${esc(s)}</option>`).join("");
+  if (pendingSect) { $("#sect").value = pendingSect; pendingSect = null; }
   buildLegend();
   render();
 }
@@ -178,39 +192,98 @@ function chip(kind, val, label, count, cls) {
     + `${label} <span class="ct">${count}</span></button>`;
 }
 
+function tally(rows, key) {
+  const m = {}; rows.forEach(d => { const v = d[key]; if (v != null) m[v] = (m[v] || 0) + 1; });
+  return m;
+}
+
 function buildLegend() {
   const merges = DATA.filter(d => d.kind === "merge");
   const act = merges.filter(d => d.active).length, cand = merges.length - act;
-  const bc = {};
-  merges.forEach(d => bc[d.status_norm] = (bc[d.status_norm] || 0) + 1);
+  const bc = tally(merges, "status_norm");
+  const ps = tally(merges, "pr_state");
+  const lv = tally(merges.filter(d => d.pr_state), "review_level");
   $("#totals").textContent = `${merges.length} merges · ${act} active / ${cand} candidates`;
 
   let html = '<span class="lbl">state:</span>'
     + chip("state", "active", "● active", act)
     + chip("state", "cand", "○ candidate", cand)
     + '<span class="sep">bucket:</span>'
-    + Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => chip("bucket", b, b, bc[b], "n-" + b)).join("")
-    + '<button class="clearf" id="clearf">clear filters</button>';
+    + Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => chip("bucket", b, b, bc[b], "n-" + b)).join("");
+  if (Object.keys(ps).length)
+    html += '<span class="sep">PR:</span>'
+      + ["open", "merged", "closed", "missing"].filter(s => ps[s]).map(s => chip("prstate", s, s, ps[s], "st st-" + s)).join("");
+  if (Object.keys(lv).length)
+    html += '<span class="sep">review:</span>'
+      + [3, 2, 1, 0].filter(l => lv[l]).map(l => chip("level", l, "L" + l, lv[l], "lv lv" + l)).join("");
+  html += '<button class="clearf" id="clearf">clear filters</button>';
   $("#legend").innerHTML = html;
 
   $("#legend").querySelectorAll(".chip").forEach(el => el.onclick = () => {
-    const set = el.dataset.kind === "state" ? sel.states : sel.buckets;
-    set.has(el.dataset.val) ? set.delete(el.dataset.val) : set.add(el.dataset.val);
+    const set = selSet(el.dataset.kind), v = el.dataset.val;
+    set.has(v) ? set.delete(v) : set.add(v);
     syncChips(); render();
   });
   $("#clearf").onclick = () => {
-    sel.buckets.clear(); sel.states.clear();
+    Object.values(sel).forEach(s => s.clear());
     $("#q").value = ""; $("#sect").value = "";
     syncChips(); render();
   };
   syncChips();
+  insights();
 }
 
 function syncChips() {
-  $("#legend").querySelectorAll(".chip").forEach(el => {
-    const set = el.dataset.kind === "state" ? sel.states : sel.buckets;
-    el.classList.toggle("on", set.has(el.dataset.val));
-  });
+  $("#legend").querySelectorAll(".chip").forEach(el =>
+    el.classList.toggle("on", selSet(el.dataset.kind).has(el.dataset.val)));
+}
+
+function insights() {
+  const cand = DATA.filter(d => d.kind === "merge" && !d.active);
+  const known = cand.filter(d => d.pr_state);
+  const n = s => known.filter(d => d.pr_state === s).length;
+  const unrev = known.filter(d => !d.review_level).length;
+  const nacked = known.filter(d => d.nacks > 0).length;
+  $("#insights").innerHTML = cand.length
+    ? `candidates: <b>${cand.length}</b> · status known: ${known.length}/${cand.length}`
+      + ` · <span class="ins merged">merged upstream: ${n("merged")}</span>`
+      + ` · <span class="ins open">open: ${n("open")}</span> · closed: ${n("closed")}`
+      + ` · <span class="ins">0 reviews: ${unrev}</span>`
+      + (nacked ? ` · <span class="ins nack">NACKed: ${nacked}</span>` : "")
+    : "";
+}
+
+function ago(iso) {
+  if (!iso) return "";
+  const days = (Date.now() - Date.parse(iso)) / 86400000;
+  if (days < 1) return "today";
+  if (days < 30) return Math.round(days) + "d";
+  if (days < 365) return Math.round(days / 30) + "mo";
+  return (days / 365).toFixed(1) + "y";
+}
+
+const LS = "bosun.view";
+function saveState() {
+  try {
+    localStorage.setItem(LS, JSON.stringify({
+      repo: $("#repo").value, ref: $("#ref").value, spec: $("#spec").value,
+      q: $("#q").value, sect: $("#sect").value, merges: $("#merges").checked,
+      sortKey, sortDir, buckets: [...sel.buckets], states: [...sel.states],
+      prstate: [...sel.prstate], level: [...sel.level],
+    }));
+  } catch (e) {}
+}
+function restoreState() {
+  let st; try { st = JSON.parse(localStorage.getItem(LS)); } catch (e) {}
+  if (!st) return null;
+  if (st.repo) $("#repo").value = st.repo;
+  if (st.ref) $("#ref").value = st.ref;
+  if (st.q) $("#q").value = st.q;
+  if (typeof st.merges === "boolean") $("#merges").checked = st.merges;
+  if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
+  sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
+  sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
+  return st;
 }
 
 function updateSortIndicators() {
@@ -228,7 +301,9 @@ function filtered() {
     if (sect && d.section !== sect) return false;
     if (sel.buckets.size && !sel.buckets.has(d.status_norm)) return false;
     if (sel.states.size && !sel.states.has(d.active ? "active" : "cand")) return false;
-    if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""}`.toLowerCase().includes(q)) return false;
+    if (sel.prstate.size && !sel.prstate.has(d.pr_state)) return false;
+    if (sel.level.size && !sel.level.has(String(d.review_level))) return false;
+    if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""} ${d.pr_title||""}`.toLowerCase().includes(q)) return false;
     return true;
   });
   rows.sort((a, b) => ((a[sortKey] ?? "") + "").localeCompare((b[sortKey] ?? "") + "",
@@ -252,13 +327,15 @@ function render() {
     <td>${d.active ? '<span class="dot on">●</span>' : '<span class="dot">○</span>'}</td>
     <td>${esc(d.section)}</td>
     <td>${prLink(d)}</td>
-    <td>${esc(d.name)}</td>
+    <td${d.pr_title ? ` title="${esc(d.pr_title)}"` : ""}>${esc(d.name)}</td>
     <td><span class="chip n-${d.status_norm}">${d.status_norm}</span> <span class="raw">${esc(d.status||"")}</span></td>
     <td>${d.pr_state ? `<span class="st st-${d.pr_state}">${d.pr_state}</span>` : ""}</td>
     <td>${reviewCell(d)}</td>
+    <td class="age" title="${esc(d.updated_at||"")}">${ago(d.updated_at)}</td>
     <td><code>${esc(d.commit||"")}</code></td>
     <td>${d.upstream ? `<code>${esc(d.last||"")}</code> ${esc(d.upstream)}` : ""}</td>
   </tr>`).join("");
+  saveState();
 }
 
 async function fetchGh() {
@@ -278,7 +355,8 @@ async function fetchGh() {
         const j = await r.json();
         if (r.status === 429) { stop = true; $("#status").textContent = "rate limited — set GITHUB_TOKEN or use gh auth. " + (j.error||""); return; }
         if (r.ok) DATA.filter(x => x.prnum === d.prnum).forEach(x => {
-          x.pr_state = j.state; x.review_level = j.review_level; x.acks = j.acks; x.nacks = j.nacks;
+          x.pr_state = j.state; x.review_level = j.review_level; x.acks = j.acks;
+          x.nacks = j.nacks; x.pr_title = j.title; x.updated_at = j.updated_at;
         });
       } catch (e) {}
       $("#status").textContent = `fetching ${++done}/${list.length}${note}…`;
@@ -286,6 +364,7 @@ async function fetchGh() {
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
   if (!stop) $("#status").textContent = `done (${done}${note})`;
+  buildLegend();  // refresh PR-state / review-level facet counts + insights
   render();
 }
 
@@ -343,7 +422,10 @@ $("#url").addEventListener("keydown", e => { if (e.key === "Enter") loadUrl(); }
 $("#url").addEventListener("paste", () => setTimeout(loadUrl, 0));
 $("#fetchgh").onclick = fetchGh;
 $("#spec").addEventListener("change", loadEntries);
-loadSpecs();
+
+const _saved = restoreState();
+pendingSect = (_saved && _saved.sect) || null;
+loadSpecs(_saved && _saved.spec);
 </script></body></html>"""
 
 
