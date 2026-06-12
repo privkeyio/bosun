@@ -98,7 +98,7 @@ def api_cleanup_diff():
     file = request.args.get("file")
     if not file:
         return Response("file parameter required\n", status=400, mimetype="text/plain")
-    include = [s for s in request.args.get("include", "merged,closed").split(",") if s]
+    include = [s for s in request.args.get("include", "closed").split(",") if s]
     try:
         text = source.fetch_spec(repo, ref, file)
         cats = suggest.categorize([_entry_dict(e) for e in parse_spec(text)])
@@ -295,6 +295,15 @@ const prLink = d => d.url
   ? `<a href="${d.url}" target="_blank"${d.pr_title ? ` title="${esc(d.pr_title)}"` : ""}>${esc(d.prnum)}</a>`
   : esc(d.prnum || "");
 
+// Spec name "-" means "use the PR's default origin-pull branch" — show the PR
+// title instead when we have it; otherwise branch name + title.
+function nameCell(d) {
+  const named = d.name && d.name !== "-";
+  const primary = named ? esc(d.name) : (d.pr_title ? esc(d.pr_title) : esc(d.name || ""));
+  const extra = named && d.pr_title ? ` <span class="muted">— ${esc(d.pr_title)}</span>` : "";
+  return primary + extra;
+}
+
 const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), nack: new Set() };
 const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level }[kind]);
 
@@ -467,7 +476,7 @@ function render() {
     <td>${d.active ? '<span class="dot on">●</span>' : '<span class="dot">○</span>'}</td>
     <td>${esc(d.section)}</td>
     <td>${prLink(d)}</td>
-    <td${d.pr_title ? ` title="${esc(d.pr_title)}"` : ""}>${esc(d.name)}</td>
+    <td title="${esc(d.pr_title || d.name || "")}">${nameCell(d)}</td>
     <td><span class="chip n-${d.status_norm}">${d.status_norm}</span> <span class="raw">${esc(d.status||"")}</span></td>
     <td>${d.pr_state ? `<span class="st st-${d.pr_state}">${d.pr_state}</span>` : ""}</td>
     <td>${reviewCell(d)}</td>
@@ -541,7 +550,7 @@ function sugEntry(e) {
     e.updated_at ? `<span class="age">${ago(e.updated_at)}</span>` : "",
   ].filter(Boolean).join(" ");
   return `<div class="se"><span class="se-pr">${pr}</span>`
-    + `<span class="se-name">${esc(e.name)}${e.pr_title ? ` <span class="muted">— ${esc(e.pr_title)}</span>` : ""}</span>`
+    + `<span class="se-name">${nameCell(e)}</span>`
     + `<span class="se-meta">${meta}</span></div>`;
 }
 
@@ -555,9 +564,10 @@ async function openSuggest() {
     if (!r.ok) throw new Error(j.error || r.statusText);
     let html = `<div class="cover">Based on <b>${j.known}</b> of ${j.total} candidates with fetched status.`
       + (j.known < j.total ? ` Enable auto-fetch or click “fetch status” for fuller coverage.` : "") + `</div>`;
-    const rm = j.merged_upstream.length + j.closed_upstream.length;
-    if (rm) html += `<div class="cleanup"><div><b>Spec cleanup</b>`
-      + `<div class="desc">${rm} candidate lines for PRs no longer open upstream (merged or closed).</div></div>`
+    const closed = j.closed_upstream.length;
+    if (closed) html += `<div class="cleanup"><div><b>Spec cleanup</b>`
+      + `<div class="desc">${closed} candidate lines for PRs closed without merging upstream — safe to remove. `
+      + `Merged-upstream PRs are listed below for review, not auto-removed (Core no longer flows in automatically, so you may want to re-PR them).</div></div>`
       + `<button id="dldiff" class="dlbtn">download .diff</button></div>`;
     for (const [key, title, icon, cls, desc] of SUG_GROUPS) {
       const rows = j[key] || [];
@@ -570,7 +580,7 @@ async function openSuggest() {
     const dl = document.getElementById("dldiff");
     if (dl) dl.onclick = () => {
       const a = document.createElement("a");
-      a.href = `/api/cleanup.diff?repo=${encodeURIComponent(repo)}&ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(file)}&include=merged,closed`;
+      a.href = `/api/cleanup.diff?repo=${encodeURIComponent(repo)}&ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(file)}&include=closed`;
       a.download = (file || "bosun").replace(/[^a-z0-9.-]/gi, "_") + ".cleanup.diff";
       a.click();
     };
