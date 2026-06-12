@@ -128,7 +128,7 @@ _PAGE = """<!doctype html>
 <div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
 
 <div class="source">
-  <input id="url" type="url" placeholder="paste a GitHub spec URL, e.g. https://github.com/luke-jr/tmp/blob/knots-spec/knots-next-29.spec">
+  <input id="url" type="url" placeholder="paste a GitHub spec URL: https://github.com/<owner>/<repo>/blob/<ref>/<file>.spec">
   <button id="go">load</button>
   <label>spec <select id="spec"></select></label>
 </div>
