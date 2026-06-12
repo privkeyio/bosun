@@ -11,7 +11,7 @@ carries and how far along its review is.
 
 ## Status: early prototype
 
-Two pieces work today:
+Three pieces work today:
 
 - **`bosun/spec.py`** — parses a Knots assembly spec into structured
   `SpecEntry` records (section, active vs commented-out candidate, disposition
@@ -20,6 +20,8 @@ Two pieces work today:
 - **`bosun/ack.py`** — classifies PR comment text into review signals
   (concept / utACK / tested-ACK / NACK) and reduces a PR's signals to a 0-3
   review level. Adapted from Pierre Rochard's bitcoin-acks (MIT).
+- **`bosun/web.py`** — a zero-dependency web viewer: a sortable, filterable
+  table of every spec entry, with PR numbers linked to the right fork's GitHub.
 
 ## Usage
 
@@ -32,6 +34,12 @@ python3 -m bosun.spec testdata/knots-next-29.spec --candidates --status "needs r
 
 # Structured dump
 python3 -m bosun.spec testdata/knots-next-29.spec --json
+
+# Browse it in a browser (serves at http://127.0.0.1:8765)
+python3 -m bosun.web testdata/knots-next-29.spec
+
+# ...or write a standalone HTML file instead of serving
+python3 -m bosun.web testdata/knots-next-29.spec -o bosun.html
 ```
 
 ## Roadmap
@@ -45,7 +53,8 @@ python3 -m bosun.spec testdata/knots-next-29.spec --json
    is the raw review signal. The value is merging them.
 4. **Cross-fork matrix** — same PR/patch, its review + merge status across
    every tracked fork. The "compare a variety of forks" view.
-5. **Persistence + UI** — a store and a dashboard once the data model settles.
+5. **Persistence + richer UI** — a store behind the viewer and a fuller
+   dashboard (the current `web.py` is a read-only, spec-only starting point).
 
 ## License
 
