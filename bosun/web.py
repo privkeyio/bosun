@@ -146,11 +146,14 @@ _PAGE = """<!doctype html>
   details.src label { margin-right: .4rem; }
 
   .layout { display: flex; gap: 1.4rem; align-items: flex-start; }
-  .panel { flex: 0 0 220px; position: sticky; top: .5rem; display: flex; flex-direction: column; gap: .85rem; }
+  .panel { flex: 0 0 220px; position: sticky; top: .5rem; display: flex; flex-direction: column;
+           gap: .8rem; max-height: calc(100vh - 1rem); overflow-y: auto; padding-right: .35rem; }
   .panel input[type=search], .panel select { width: 100%; }
   main { flex: 1; min-width: 0; }
+  body.panel-collapsed .panel { display: none; }
+  .toggle { background: none; border: 1px solid #8884; border-radius: .4rem; padding: .25rem .55rem; }
   @media (max-width: 820px) {
-    .layout { flex-direction: column; } .panel { position: static; flex: auto; width: 100%; }
+    .layout { flex-direction: column; } .panel { position: static; flex: auto; width: 100%; max-height: none; }
   }
 
   .fgroup { display: flex; flex-direction: column; gap: .4rem; }
@@ -215,6 +218,7 @@ _PAGE = """<!doctype html>
 </style></head><body>
 
 <header class="topbar">
+  <button id="togglepanel" class="toggle" title="Show/hide filters">☰</button>
   <h1>bosun</h1>
   <input id="url" type="url" placeholder="paste a GitHub spec URL: https://github.com/<owner>/<repo>/blob/<ref>/<file>.spec">
   <button id="go">load</button>
@@ -225,6 +229,7 @@ _PAGE = """<!doctype html>
     <label>ref <input id="ref" value="%%REF%%"></label>
     <button id="loadspecs">list specs</button>
   </details>
+  <button id="suggest" title="Actionable maintenance suggestions + a spec-cleanup diff">★ suggestions</button>
 </header>
 
 <div class="layout">
@@ -243,8 +248,6 @@ _PAGE = """<!doctype html>
     <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown">fetch status (shown)</button>
     <button id="refresh" title="Re-fetch shown rows, ignoring the cache">↻ refresh shown</button>
     <button id="exportcsv" title="Download the shown rows as CSV">export CSV</button>
-    <hr>
-    <button id="suggest" title="Actionable maintenance suggestions + a spec-cleanup diff">★ suggestions</button>
   </aside>
 
   <main>
@@ -379,6 +382,7 @@ function saveState() {
       repo: $("#repo").value, ref: $("#ref").value, spec: $("#spec").value,
       q: $("#q").value, sect: $("#sect").value, merges: $("#merges").checked,
       auto: $("#auto").checked, sortKey, sortDir,
+      collapsed: document.body.classList.contains("panel-collapsed"),
       buckets: [...sel.buckets], states: [...sel.states],
       prstate: [...sel.prstate], level: [...sel.level], nack: [...sel.nack],
     }));
@@ -392,6 +396,7 @@ function restoreState() {
   if (st.q) $("#q").value = st.q;
   if (typeof st.merges === "boolean") $("#merges").checked = st.merges;
   if (typeof st.auto === "boolean") $("#auto").checked = st.auto;
+  if (st.collapsed) document.body.classList.add("panel-collapsed");
   if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
   sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
   sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
@@ -614,6 +619,7 @@ $("#fetchgh").onclick = () => fetchGh(false);
 $("#refresh").onclick = () => fetchGh(true);
 $("#exportcsv").onclick = exportCsv;
 $("#suggest").onclick = openSuggest;
+$("#togglepanel").onclick = () => { document.body.classList.toggle("panel-collapsed"); saveState(); };
 $("#sugclose").onclick = () => $("#sugmodal").style.display = "none";
 $("#sugmodal").onclick = e => { if (e.target.id === "sugmodal") $("#sugmodal").style.display = "none"; };
 $("#clearf").onclick = () => {
