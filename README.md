@@ -11,35 +11,49 @@ carries and how far along its review is.
 
 ## Status: early prototype
 
-Three pieces work today:
+The core (`spec` / `source` / `ack`) is pure stdlib; only the web UI needs Flask.
 
 - **`bosun/spec.py`** — parses a Knots assembly spec into structured
   `SpecEntry` records (section, active vs commented-out candidate, disposition
-  tag, PR number, branch, commit/`last=` pins, upstream). This turns Luke's
-  freeform comments into data.
+  tag, PR number, branch, commit/`last=` pins, upstream) and normalizes the
+  ~200 freeform disposition strings into canonical buckets (`needs-review`,
+  `needs-concept`, `needs-work`, `triage`, `deferred`, `wontfix`, ...).
+- **`bosun/source.py`** — lists and fetches spec files from a GitHub repo/branch
+  (default `luke-jr/tmp` @ `knots-spec`). Honours `GITHUB_TOKEN` for rate limits.
 - **`bosun/ack.py`** — classifies PR comment text into review signals
   (concept / utACK / tested-ACK / NACK) and reduces a PR's signals to a 0-3
   review level. Adapted from Pierre Rochard's bitcoin-acks (MIT).
-- **`bosun/web.py`** — a zero-dependency web viewer: a sortable, filterable
-  table of every spec entry, with PR numbers linked to the right fork's GitHub.
+- **`bosun/web.py`** — a Flask app: pick any spec from the default repo, or
+  point `repo`/`ref` at your own fork. Sortable, filterable table with canonical
+  status buckets and PR numbers linked to the right fork's GitHub.
 
 ## Usage
 
+### Web app (pick specs from any repo/fork)
+
 ```bash
-# Summary of a spec: active vs candidate merges, by section and disposition
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m bosun.web                 # http://127.0.0.1:8765
+
+# default a different fork as the source
+.venv/bin/python -m bosun.web --repo me/tmp --ref my-specs
+```
+
+Open the page, pick a spec from the dropdown (defaults to `luke-jr/tmp` @
+`knots-spec`), or change `repo`/`ref` to browse your own fork's specs. Set
+`GITHUB_TOKEN` in the environment to raise the API rate limit.
+
+### CLI (pure stdlib, no install)
+
+```bash
+# Summary: active vs candidate merges, by section and canonical bucket
 python3 -m bosun.spec testdata/knots-next-29.spec --summary
 
-# Just the commented-out candidates that need review
-python3 -m bosun.spec testdata/knots-next-29.spec --candidates --status "needs review"
+# Candidates in a given bucket
+python3 -m bosun.spec testdata/knots-next-29.spec --norm needs-review
 
 # Structured dump
 python3 -m bosun.spec testdata/knots-next-29.spec --json
-
-# Browse it in a browser (serves at http://127.0.0.1:8765)
-python3 -m bosun.web testdata/knots-next-29.spec
-
-# ...or write a standalone HTML file instead of serving
-python3 -m bosun.web testdata/knots-next-29.spec -o bosun.html
 ```
 
 ## Roadmap

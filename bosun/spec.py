@@ -50,6 +50,36 @@ class SpecEntry:
     conflict_patch: str | None
     comment: str | None         # inline trailing note, or full text for pure comments
     raw: str
+    status_norm: str = ""       # canonical bucket derived from status (see normalize_status)
+
+
+# Canonical disposition buckets, in priority order: the first whose pattern
+# matches the (compound, freeform) status string wins.
+_NORM_RULES = [
+    ("wontfix", r"broken|bad idea|not worth|no point|hopeless|diverged|duplicate|"
+                r"redundant|not useful|doesn.?t affect|don.?t care|\bnack\b|unclear benefit|"
+                r"nothing to fix|never in knots|not in knots|no benefit"),
+    ("deferred", r"\btodo\b|if needed|waiting for|waiting on|\bafter \b|core release|"
+                 r"needs? bip|bip final|needed in \d|29\.xtodo|30\.xtodo|\bbackport\b"),
+    ("needs-concept", r"concept"),
+    ("needs-work", r"needs work|needs fix|\bwip\b|rewrite|polish|completion|diff.?minimis|"
+                   r"simplif|api work|new index|not ready|needs updating|ui improvement|"
+                   r"needs care|refactor|needs work"),
+    ("needs-review", r"review"),
+    ("triage", r"triage"),
+]
+_NORM_COMPILED = [(name, re.compile(pat, re.I)) for name, pat in _NORM_RULES]
+
+
+def normalize_status(status: str | None, active: bool) -> str:
+    if active:
+        return "active"
+    if not status:
+        return "untagged"
+    for name, rx in _NORM_COMPILED:
+        if rx.search(status):
+            return name
+    return "other"
 
 
 def _strip_inline_comment(body: str) -> tuple[str, str | None]:
@@ -143,6 +173,9 @@ def parse_spec(text: str) -> list[SpecEntry]:
             upstream=parsed.get("upstream"), conflict_patch=parsed.get("conflict_patch"),
             comment=parsed.get("comment"), raw=line,
         ))
+
+    for e in entries:
+        e.status_norm = normalize_status(e.status, e.active)
     return entries
 
 
@@ -157,6 +190,7 @@ def _main() -> None:
     ap.add_argument("--json", action="store_true", help="dump entries as JSON")
     ap.add_argument("--summary", action="store_true", help="print a summary")
     ap.add_argument("--status", help="only entries whose status contains this (case-insensitive)")
+    ap.add_argument("--norm", help="only entries in this canonical status bucket")
     ap.add_argument("--section", help="only entries in this section")
     ap.add_argument("--candidates", action="store_true", help="only commented-out candidates")
     args = ap.parse_args()
@@ -168,6 +202,8 @@ def _main() -> None:
         entries = [e for e in entries if e.section == args.section]
     if args.status:
         entries = [e for e in entries if e.status and args.status.lower() in e.status.lower()]
+    if args.norm:
+        entries = [e for e in entries if e.status_norm == args.norm]
     if args.candidates:
         entries = [e for e in entries if not e.active and e.kind == "merge"]
 
@@ -186,9 +222,9 @@ def _main() -> None:
         by_sec = collections.Counter(e.section for e in active)
         for sec, n in by_sec.most_common():
             print(f"  {n:4}  {sec}")
-        print("\ncandidate disposition (commented-out merges):")
-        by_status = collections.Counter((e.status or "(untagged)") for e in cand)
-        for st, n in by_status.most_common():
+        print("\ncandidate disposition, canonical buckets:")
+        by_norm = collections.Counter(e.status_norm for e in cand)
+        for st, n in by_norm.most_common():
             print(f"  {n:4}  {st}")
         return
 
