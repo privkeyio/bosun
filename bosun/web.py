@@ -89,88 +89,120 @@ _PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bosun</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 1rem 1.5rem; }
-  h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
-  .sub { opacity: .7; margin-bottom: .5rem; }
-  .source, .controls { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
-  .source { margin-bottom: .5rem; }
-  .controls { position: sticky; top: 0; background: Canvas; padding: .5rem 0; z-index: 2; }
+  :root { color-scheme: light dark; --line: #8883; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: .9rem 1.2rem; }
   input, select, button { font: inherit; padding: .3rem .5rem; }
-  input[type=search] { min-width: 16rem; }
-  #url { min-width: 24rem; flex: 1; } #repo { min-width: 11rem; } #ref { min-width: 8rem; }
-  .source.row2 { opacity: .8; font-size: .9em; }
-  .legend { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .25rem 0 .6rem; }
-  .legend .lbl, .legend .sep { opacity: .55; font-size: .78rem; margin: 0 .15rem; }
-  .legend .chip { cursor: pointer; border: 1px solid #8884; }
-  .legend .chip:hover { border-color: currentColor; }
-  .legend .chip.on { box-shadow: inset 0 0 0 2px currentColor; font-weight: 600; }
-  .legend .chip .ct { opacity: .6; }
-  .clearf { font: inherit; font-size: .78rem; cursor: pointer; opacity: .75;
-            background: none; border: 1px solid #8884; border-radius: .6rem; padding: .12rem .5rem; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .3rem .6rem; border-bottom: 1px solid #8884; vertical-align: top; }
-  th { cursor: pointer; user-select: none; position: sticky; top: 3rem; background: Canvas; white-space: nowrap; }
-  th:hover { background: #8882; } th.sorted { background: #8883; }
-  tr:hover td { background: #8881; }
-  code { font-size: .85em; opacity: .8; } a { color: inherit; } .raw { opacity: .7; }
-  .dot { opacity: .55; } .dot.on { color: #2a8a2a; opacity: 1; }
-  .chip { display: inline-block; font-size: .78em; padding: .1rem .5rem; border-radius: .7rem; white-space: nowrap; }
+  button { cursor: pointer; }
+
+  .topbar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap;
+            padding-bottom: .7rem; border-bottom: 1px solid var(--line); margin-bottom: .9rem; }
+  .topbar h1 { font-size: 1.15rem; margin: 0; }
+  #url { flex: 1; min-width: 18rem; }
+  .topbar .spec select { min-width: 12rem; }
+  details.src { font-size: .85rem; }
+  details.src summary { cursor: pointer; opacity: .7; }
+  details.src #repo { min-width: 10rem; } details.src #ref { min-width: 7rem; }
+  details.src label { margin-right: .4rem; }
+
+  .layout { display: flex; gap: 1.4rem; align-items: flex-start; }
+  .panel { flex: 0 0 220px; position: sticky; top: .5rem; display: flex; flex-direction: column; gap: .85rem; }
+  .panel input[type=search], .panel select { width: 100%; }
+  main { flex: 1; min-width: 0; }
+  @media (max-width: 820px) {
+    .layout { flex-direction: column; } .panel { position: static; flex: auto; width: 100%; }
+  }
+
+  .fgroup { display: flex; flex-direction: column; gap: .4rem; }
+  .fhead { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; opacity: .5; }
+  .fchips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .frow { font-size: .9rem; display: flex; align-items: center; gap: .35rem; }
+  .panel hr { width: 100%; border: none; border-top: 1px solid var(--line); margin: .15rem 0; }
+  .panel button:not(.clearf) { width: 100%; text-align: left; }
+  .clearf { font-size: .78rem; opacity: .8; background: none; align-self: flex-start;
+            border: 1px solid #8884; border-radius: .6rem; padding: .2rem .55rem; }
+
+  .chip { display: inline-block; font-size: .78em; padding: .12rem .5rem; border-radius: .7rem; white-space: nowrap; }
+  .fchips .chip { cursor: pointer; border: 1px solid #8884; }
+  .fchips .chip:hover { border-color: currentColor; }
+  .fchips .chip.on { box-shadow: inset 0 0 0 2px currentColor; font-weight: 600; }
+  .chip .ct { opacity: .55; margin-left: .15rem; }
   .n-active{background:#2a8a2a55} .n-needs-review{background:#2b6cb055}
   .n-needs-concept{background:#7c3aed55} .n-needs-work{background:#c8881155}
   .n-triage{background:#88888855} .n-deferred{background:#0d948855}
   .n-wontfix{background:#c0303055} .n-other,.n-untagged{background:#8888882a}
-  .st { font-size: .78em; padding: .05rem .4rem; border-radius: .6rem; }
+  .st { display: inline-block; font-size: .78em; padding: .08rem .45rem; border-radius: .6rem; }
   .st-merged{background:#7c3aed55} .st-open{background:#2a8a2a55}
   .st-closed{background:#c0303055} .st-missing,.st-unknown{background:#8888882a}
-  .lv { font-size: .78em; padding: .05rem .35rem; border-radius: .5rem; background:#8888882a; }
+  .lv { display: inline-block; font-size: .78em; padding: .08rem .4rem; border-radius: .5rem; background:#8888882a; }
   .lv2 { background:#c8881144 } .lv3 { background:#2a8a2a55 } .nackt { color:#c03030 }
-  #status { opacity: .7; font-style: italic; }
-  .insights { font-size: .85rem; margin: .1rem 0 .7rem; opacity: .9; }
+
+  .sub { opacity: .7; margin-bottom: .4rem; font-size: .9rem; }
+  #status { font-style: italic; }
+  .insights { font-size: .85rem; margin: 0 0 .7rem; display: flex; flex-wrap: wrap; gap: .35rem .5rem; align-items: center; }
   .insights b { font-weight: 600; }
-  .insights .ins { padding: .05rem .4rem; border-radius: .6rem; background: #8888882a; }
-  .insights .ins.merged { background:#7c3aed44 } .insights .ins.open { background:#2a8a2a44 }
-  .insights .ins.nack { background:#c0303044 }
-  .insights .ins { cursor: pointer; } .insights .ins:hover { outline: 1px solid currentColor; }
+  .insights .ins { cursor: pointer; padding: .08rem .45rem; border-radius: .6rem; background: #8888882a; }
+  .insights .ins:hover { outline: 1px solid currentColor; }
+  .insights .ins.merged { background:#7c3aed44 } .insights .ins.open { background:#2a8a2a44 } .insights .ins.nack { background:#c0303044 }
+
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .32rem .6rem; border-bottom: 1px solid #8884; vertical-align: top; }
+  th { cursor: pointer; user-select: none; position: sticky; top: 0; background: Canvas; white-space: nowrap; }
+  th:hover { background: #8882; } th.sorted { background: #8883; }
+  tbody tr:nth-child(even) td { background: #80808012; }
+  tr:hover td { background: #8081; }
+  code { font-size: .85em; opacity: .8; } a { color: inherit; } .raw { opacity: .65; }
+  .dot { opacity: .55; } .dot.on { color: #2a8a2a; opacity: 1; }
   .age { opacity: .65; font-size: .85em; white-space: nowrap; }
-  tr.drop td { opacity: .45; } tr.drop:hover td { opacity: .7; }
+  tr.drop td { opacity: .45; } tr.drop:hover td { opacity: .72; }
   .empty { text-align: center; padding: 1.5rem; opacity: .6; }
 </style></head><body>
-<h1>bosun</h1>
-<div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
 
-<div class="source">
+<header class="topbar">
+  <h1>bosun</h1>
   <input id="url" type="url" placeholder="paste a GitHub spec URL: https://github.com/<owner>/<repo>/blob/<ref>/<file>.spec">
   <button id="go">load</button>
-  <label>spec <select id="spec"></select></label>
-</div>
-<div class="source row2">
-  <label>repo <input id="repo" value="%%REPO%%"></label>
-  <label>ref <input id="ref" value="%%REF%%"></label>
-  <button id="loadspecs">list specs</button>
-</div>
+  <label class="spec">spec <select id="spec"></select></label>
+  <details class="src">
+    <summary>source</summary>
+    <label>repo <input id="repo" value="%%REPO%%"></label>
+    <label>ref <input id="ref" value="%%REF%%"></label>
+    <button id="loadspecs">list specs</button>
+  </details>
+</header>
 
-<div class="legend" id="legend"></div>
-<div class="insights" id="insights"></div>
+<div class="layout">
+  <aside class="panel">
+    <input type="search" id="q" placeholder="search…  ( / )">
+    <div class="fgroup"><div class="fhead">State</div><div class="fchips" id="g-state"></div></div>
+    <div class="fgroup"><div class="fhead">Disposition</div><div class="fchips" id="g-bucket"></div></div>
+    <div class="fgroup" id="wrap-prstate"><div class="fhead">PR state</div><div class="fchips" id="g-prstate"></div></div>
+    <div class="fgroup" id="wrap-level"><div class="fhead">Review level</div><div class="fchips" id="g-level"></div></div>
+    <div class="fgroup"><div class="fhead">Section</div><select id="sect"><option value="">all sections</option></select></div>
+    <label class="frow"><input type="checkbox" id="merges" checked> merges only</label>
+    <button class="clearf" id="clearf">clear filters</button>
+    <hr>
+    <div class="fhead">GitHub status</div>
+    <label class="frow"><input type="checkbox" id="auto"> auto-fetch as I filter</label>
+    <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown">fetch status (shown)</button>
+    <button id="refresh" title="Re-fetch shown rows, ignoring the cache">↻ refresh shown</button>
+    <button id="exportcsv" title="Download the shown rows as CSV">export CSV</button>
+  </aside>
 
-<div class="controls">
-  <input type="search" id="q" placeholder="search name / PR / status…">
-  <select id="sect"><option value="">all sections</option></select>
-  <label><input type="checkbox" id="merges" checked> merges only</label>
-  <label title="Automatically fetch GitHub status for rows as you filter"><input type="checkbox" id="auto"> auto-fetch</label>
-  <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown (cached after)">fetch status (shown)</button>
-  <button id="refresh" title="Re-fetch shown rows from GitHub, ignoring the cache">↻ refresh</button>
-  <button id="exportcsv" title="Download the shown rows as CSV">export CSV</button>
+  <main>
+    <div class="sub"><span id="totals"></span> · <span id="shown"></span> · <span id="status"></span></div>
+    <div class="insights" id="insights"></div>
+    <div class="tablewrap"><table><thead><tr>
+      <th data-k="active">●</th><th data-k="section">section</th>
+      <th data-k="prnum">PR</th><th data-k="name">name</th>
+      <th data-k="status_norm">disposition</th>
+      <th data-k="pr_state">PR state</th><th data-k="review_level">review</th>
+      <th data-k="updated_at">age</th>
+      <th data-k="commit">commit</th><th data-k="upstream">upstream</th>
+    </tr></thead><tbody id="rows"></tbody></table></div>
+  </main>
 </div>
-
-<table><thead><tr>
-  <th data-k="active">●</th><th data-k="section">section</th>
-  <th data-k="prnum">PR</th><th data-k="name">name</th>
-  <th data-k="status_norm">disposition</th>
-  <th data-k="pr_state">PR state</th><th data-k="review_level">review</th>
-  <th data-k="updated_at">age</th>
-  <th data-k="commit">commit</th><th data-k="upstream">upstream</th>
-</tr></thead><tbody id="rows"></tbody></table>
 
 <script>
 let DATA = [], sortKey = "section", sortDir = 1, pendingSect = null;
@@ -204,6 +236,10 @@ function tally(rows, key) {
   return m;
 }
 
+function fillGroup(id, items) {
+  $(id).innerHTML = items.map(([kind, val, label, count, cls]) => chip(kind, val, label, count, cls)).join("");
+}
+
 function buildLegend() {
   const merges = DATA.filter(d => d.kind === "merge");
   const act = merges.filter(d => d.active).length, cand = merges.length - act;
@@ -212,36 +248,28 @@ function buildLegend() {
   const lv = tally(merges.filter(d => d.pr_state), "review_level");
   $("#totals").textContent = `${merges.length} merges · ${act} active / ${cand} candidates`;
 
-  let html = '<span class="lbl">state:</span>'
-    + chip("state", "active", "● active", act)
-    + chip("state", "cand", "○ candidate", cand)
-    + '<span class="sep">bucket:</span>'
-    + Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => chip("bucket", b, b, bc[b], "n-" + b)).join("");
-  if (Object.keys(ps).length)
-    html += '<span class="sep">PR:</span>'
-      + ["open", "merged", "closed", "missing"].filter(s => ps[s]).map(s => chip("prstate", s, s, ps[s], "st st-" + s)).join("");
-  if (Object.keys(lv).length)
-    html += '<span class="sep">review:</span>'
-      + [3, 2, 1, 0].filter(l => lv[l]).map(l => chip("level", l, "L" + l, lv[l], "lv lv" + l)).join("");
-  html += '<button class="clearf" id="clearf">clear filters</button>';
-  $("#legend").innerHTML = html;
+  fillGroup("#g-state", [["state", "active", "● active", act], ["state", "cand", "○ candidate", cand]]);
+  fillGroup("#g-bucket", Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => ["bucket", b, b, bc[b], "n-" + b]));
 
-  $("#legend").querySelectorAll(".chip").forEach(el => el.onclick = () => {
+  const psKeys = ["open", "merged", "closed", "missing"].filter(s => ps[s]);
+  $("#wrap-prstate").style.display = psKeys.length ? "" : "none";
+  fillGroup("#g-prstate", psKeys.map(s => ["prstate", s, s, ps[s], "st st-" + s]));
+
+  const lvKeys = [3, 2, 1, 0].filter(l => lv[l]);
+  $("#wrap-level").style.display = lvKeys.length ? "" : "none";
+  fillGroup("#g-level", lvKeys.map(l => ["level", l, "L" + l, lv[l], "lv lv" + l]));
+
+  document.querySelectorAll(".fchips .chip").forEach(el => el.onclick = () => {
     const set = selSet(el.dataset.kind), v = el.dataset.val;
     set.has(v) ? set.delete(v) : set.add(v);
     syncChips(); render();
   });
-  $("#clearf").onclick = () => {
-    Object.values(sel).forEach(s => s.clear());
-    $("#q").value = ""; $("#sect").value = "";
-    syncChips(); render();
-  };
   syncChips();
   insights();
 }
 
 function syncChips() {
-  $("#legend").querySelectorAll(".chip").forEach(el =>
+  document.querySelectorAll(".fchips .chip").forEach(el =>
     el.classList.toggle("on", selSet(el.dataset.kind).has(el.dataset.val)));
 }
 
@@ -479,6 +507,11 @@ $("#url").addEventListener("paste", () => setTimeout(loadUrl, 0));
 $("#fetchgh").onclick = () => fetchGh(false);
 $("#refresh").onclick = () => fetchGh(true);
 $("#exportcsv").onclick = exportCsv;
+$("#clearf").onclick = () => {
+  Object.values(sel).forEach(s => s.clear());
+  $("#q").value = ""; $("#sect").value = "";
+  syncChips(); render();
+};
 $("#auto").addEventListener("change", () => { saveState(); maybeAutoFetch(); });
 $("#spec").addEventListener("change", loadEntries);
 document.addEventListener("keydown", e => {
