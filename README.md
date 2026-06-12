@@ -31,6 +31,16 @@ GitHub limit is 60 requests/hour. Bulk-prefetch a whole spec into the cache:
 .venv/bin/python -m bosun.github --file knots-next-29.spec
 ```
 
+## Maintenance digest (markdown, for the terminal)
+
+A one-command summary of what to act on — ready-to-promote shortlist (ranked by
+ACKs), contested PRs, and dead candidates — from the cached status above:
+
+```bash
+python3 -m bosun.report --file knots-next-29.spec          # prints markdown
+python3 -m bosun.report --file knots-next-29.spec -o digest.md
+```
+
 ## CLI (pure stdlib, no install)
 
 ```bash
