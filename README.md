@@ -8,8 +8,8 @@ queryable view and pairs it with live PR state and review level from GitHub, so
 you can see at a glance where each PR stands across `bitcoin/bitcoin`,
 `bitcoin-core/gui`, `bitcoinknots/bitcoin`, and any fork.
 
-The core (`spec` / `source` / `github` / `ack`) is pure stdlib; only the web UI
-needs Flask.
+The core (`spec` / `source` / `github` / `ack` / `suggest` / `report`) is pure
+stdlib; only the web UI needs Flask.
 
 ## Web app
 
@@ -52,4 +52,4 @@ python3 -m bosun.spec testdata/knots-next-29.spec --json
 ## License
 
 MIT. See [LICENSE](LICENSE). The ACK classifier in `bosun/ack.py` is adapted
-from Pierre Rochard's bitcoin-acks (MIT).
+from Pierre Rochard's [bitcoin-acks](https://github.com/PierreRochard/bitcoin-acks) (MIT).
