@@ -96,15 +96,22 @@ _PAGE = """<!doctype html>
   input, select, button { font: inherit; padding: .3rem .5rem; }
   input[type=search] { min-width: 16rem; }
   #repo { min-width: 12rem; } #ref { min-width: 8rem; }
-  .legend { display: flex; gap: .8rem; align-items: center; flex-wrap: wrap;
-            font-size: .8rem; opacity: .9; margin: .25rem 0 .75rem; }
+  .legend { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .25rem 0 .6rem; }
+  .legend .lbl, .legend .sep { opacity: .55; font-size: .78rem; margin: 0 .15rem; }
+  .legend .chip { cursor: pointer; border: 1px solid #8884; }
+  .legend .chip:hover { border-color: currentColor; }
+  .legend .chip.on { box-shadow: inset 0 0 0 2px currentColor; font-weight: 600; }
+  .legend .chip .ct { opacity: .6; }
+  .clearf { font: inherit; font-size: .78rem; cursor: pointer; opacity: .75;
+            background: none; border: 1px solid #8884; border-radius: .6rem; padding: .12rem .5rem; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .3rem .6rem; border-bottom: 1px solid #8884; vertical-align: top; }
-  th { cursor: pointer; user-select: none; position: sticky; top: 3rem; background: Canvas; }
-  th:hover { background: #8882; } tr:hover td { background: #8881; }
+  th { cursor: pointer; user-select: none; position: sticky; top: 3rem; background: Canvas; white-space: nowrap; }
+  th:hover { background: #8882; } th.sorted { background: #8883; }
+  tr:hover td { background: #8881; }
   code { font-size: .85em; opacity: .8; } a { color: inherit; } .raw { opacity: .7; }
   .dot { opacity: .55; } .dot.on { color: #2a8a2a; opacity: 1; }
-  .chip { font-size: .78em; padding: .05rem .45rem; border-radius: .7rem; white-space: nowrap; }
+  .chip { display: inline-block; font-size: .78em; padding: .1rem .5rem; border-radius: .7rem; white-space: nowrap; }
   .n-active{background:#2a8a2a55} .n-needs-review{background:#2b6cb055}
   .n-needs-concept{background:#7c3aed55} .n-needs-work{background:#c8881155}
   .n-triage{background:#88888855} .n-deferred{background:#0d948855}
@@ -126,27 +133,11 @@ _PAGE = """<!doctype html>
   <label>spec <select id="spec"></select></label>
 </div>
 
-<div class="legend">
-  <span><span class="dot on">●</span>active (in the build)</span>
-  <span><span class="dot">○</span>candidate</span>
-  <span>· buckets:</span>
-  <span class="chip n-needs-review">needs-review</span>
-  <span class="chip n-needs-concept">needs-concept</span>
-  <span class="chip n-needs-work">needs-work</span>
-  <span class="chip n-triage">triage</span>
-  <span class="chip n-deferred">deferred</span>
-  <span class="chip n-wontfix">wontfix</span>
-</div>
+<div class="legend" id="legend"></div>
 
 <div class="controls">
   <input type="search" id="q" placeholder="search name / PR / status…">
   <select id="sect"><option value="">all sections</option></select>
-  <select id="norm"><option value="">all buckets</option></select>
-  <select id="state">
-    <option value="">active + candidates</option>
-    <option value="active">active only</option>
-    <option value="cand">candidates only</option>
-  </select>
   <label><input type="checkbox" id="merges" checked> merges only</label>
   <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown (cached after)">fetch GitHub status (shown)</button>
 </div>
@@ -166,30 +157,72 @@ const esc = s => (s == null ? "" : String(s)).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const prLink = d => d.url ? `<a href="${d.url}" target="_blank">${esc(d.prnum)}</a>` : esc(d.prnum || "");
 
+const sel = { buckets: new Set(), states: new Set() };
+
 function setData(arr) {
   DATA = arr;
   const secs = [...new Set(DATA.filter(d => d.section).map(d => d.section))].sort();
   $("#sect").innerHTML = '<option value="">all sections</option>'
     + secs.map(s => `<option>${esc(s)}</option>`).join("");
-  const merges = DATA.filter(d => d.kind === "merge");
-  const counts = {};
-  merges.forEach(d => counts[d.status_norm] = (counts[d.status_norm] || 0) + 1);
-  $("#norm").innerHTML = '<option value="">all buckets</option>'
-    + Object.keys(counts).sort().map(k => `<option value="${k}">${k} (${counts[k]})</option>`).join("");
-  $("#totals").textContent = `${merges.filter(d => d.active).length} active, `
-    + `${merges.filter(d => !d.active).length} candidates`;
+  buildLegend();
   render();
 }
 
+function chip(kind, val, label, count, cls) {
+  return `<button class="chip ${cls||''}" data-kind="${kind}" data-val="${val}">`
+    + `${label} <span class="ct">${count}</span></button>`;
+}
+
+function buildLegend() {
+  const merges = DATA.filter(d => d.kind === "merge");
+  const act = merges.filter(d => d.active).length, cand = merges.length - act;
+  const bc = {};
+  merges.forEach(d => bc[d.status_norm] = (bc[d.status_norm] || 0) + 1);
+  $("#totals").textContent = `${merges.length} merges · ${act} active / ${cand} candidates`;
+
+  let html = '<span class="lbl">state:</span>'
+    + chip("state", "active", "● active", act)
+    + chip("state", "cand", "○ candidate", cand)
+    + '<span class="sep">bucket:</span>'
+    + Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => chip("bucket", b, b, bc[b], "n-" + b)).join("")
+    + '<button class="clearf" id="clearf">clear filters</button>';
+  $("#legend").innerHTML = html;
+
+  $("#legend").querySelectorAll(".chip").forEach(el => el.onclick = () => {
+    const set = el.dataset.kind === "state" ? sel.states : sel.buckets;
+    set.has(el.dataset.val) ? set.delete(el.dataset.val) : set.add(el.dataset.val);
+    syncChips(); render();
+  });
+  $("#clearf").onclick = () => {
+    sel.buckets.clear(); sel.states.clear();
+    $("#q").value = ""; $("#sect").value = "";
+    syncChips(); render();
+  };
+  syncChips();
+}
+
+function syncChips() {
+  $("#legend").querySelectorAll(".chip").forEach(el => {
+    const set = el.dataset.kind === "state" ? sel.states : sel.buckets;
+    el.classList.toggle("on", set.has(el.dataset.val));
+  });
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll("th[data-k]").forEach(th => {
+    if (th.dataset.label === undefined) th.dataset.label = th.textContent;
+    th.classList.toggle("sorted", th.dataset.k === sortKey);
+    th.textContent = th.dataset.label + (th.dataset.k === sortKey ? (sortDir > 0 ? " ▲" : " ▼") : "");
+  });
+}
+
 function filtered() {
-  const q = $("#q").value.toLowerCase(), sect = $("#sect").value,
-        norm = $("#norm").value, state = $("#state").value, mergesOnly = $("#merges").checked;
+  const q = $("#q").value.toLowerCase(), sect = $("#sect").value, mergesOnly = $("#merges").checked;
   let rows = DATA.filter(d => {
     if (mergesOnly && d.kind !== "merge") return false;
     if (sect && d.section !== sect) return false;
-    if (norm && d.status_norm !== norm) return false;
-    if (state === "active" && !d.active) return false;
-    if (state === "cand" && d.active) return false;
+    if (sel.buckets.size && !sel.buckets.has(d.status_norm)) return false;
+    if (sel.states.size && !sel.states.has(d.active ? "active" : "cand")) return false;
     if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -207,6 +240,7 @@ function reviewCell(d) {
 }
 
 function render() {
+  updateSortIndicators();
   const rows = filtered();
   $("#shown").textContent = `${rows.length} shown`;
   $("#rows").innerHTML = rows.map(d => `<tr>
@@ -282,7 +316,7 @@ async function loadEntries() {
 document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   const k = th.dataset.k; sortDir = (sortKey === k) ? -sortDir : 1; sortKey = k; render();
 });
-["q","sect","norm","state","merges"].forEach(id => {
+["q","sect","merges"].forEach(id => {
   const el = $("#"+id); el.addEventListener(el.type === "checkbox" ? "change" : "input", render);
 });
 $("#loadspecs").onclick = loadSpecs;

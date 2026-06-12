@@ -2,85 +2,44 @@
 
 Track PR review and triage status across Bitcoin forks.
 
-Bitcoin Knots' review/triage state currently lives only as freeform comments in
-the assembly spec (`# Needs review:`, `# Triage:`, `# Broken:` ...), and there's
-no machine-readable view of where a given PR stands across `bitcoin/bitcoin`,
-`bitcoin-core/gui`, `bitcoinknots/bitcoin`, and downstream forks. bosun is the
-beginning of that view: a normalized, queryable picture of what each fork
-carries and how far along its review is.
+Bitcoin Knots' review/triage state lives as freeform comments in its assembly
+spec (`# Needs review:`, `# Triage:`, `# Broken:` ...). bosun parses that into a
+queryable view and pairs it with live PR state and review level from GitHub, so
+you can see at a glance where each PR stands across `bitcoin/bitcoin`,
+`bitcoin-core/gui`, `bitcoinknots/bitcoin`, and any fork.
 
-## Status: early prototype
+The core (`spec` / `source` / `github` / `ack`) is pure stdlib; only the web UI
+needs Flask.
 
-The core (`spec` / `source` / `ack`) is pure stdlib; only the web UI needs Flask.
-
-- **`bosun/spec.py`** — parses a Knots assembly spec into structured
-  `SpecEntry` records (section, active vs commented-out candidate, disposition
-  tag, PR number, branch, commit/`last=` pins, upstream) and normalizes the
-  ~200 freeform disposition strings into canonical buckets (`needs-review`,
-  `needs-concept`, `needs-work`, `triage`, `deferred`, `wontfix`, ...).
-- **`bosun/source.py`** — lists and fetches spec files from a GitHub repo/branch
-  (default `luke-jr/tmp` @ `knots-spec`). Honours `GITHUB_TOKEN` for rate limits.
-- **`bosun/ack.py`** — classifies PR comment text into review signals
-  (concept / utACK / tested-ACK / NACK) and reduces a PR's signals to a 0-3
-  review level. Adapted from Pierre Rochard's bitcoin-acks (MIT).
-- **`bosun/github.py`** — fetches live PR status (state + 0-3 ACK level) for the
-  PRs a spec references, with on-disk caching and rate-limit handling. Uses
-  `GITHUB_TOKEN`, falling back to `gh auth token`.
-- **`bosun/web.py`** — a Flask app: pick any spec from the default repo, or
-  point `repo`/`ref` at your own fork. Sortable, filterable table with canonical
-  status buckets, PR links to the right fork's GitHub, and a button to pull live
-  PR state + review level for the rows shown.
-
-## Usage
-
-### Web app (pick specs from any repo/fork)
+## Web app
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m bosun.web                 # http://127.0.0.1:8765
-
-# default a different fork as the source
-.venv/bin/python -m bosun.web --repo me/tmp --ref my-specs
+.venv/bin/python -m bosun.web            # http://127.0.0.1:8765
+.venv/bin/python -m bosun.web --repo me/tmp --ref my-specs   # default a fork
 ```
 
-Open the page, pick a spec from the dropdown (defaults to `luke-jr/tmp` @
-`knots-spec`), or change `repo`/`ref` to browse your own fork's specs. Click
-**fetch GitHub status (shown)** to pull live PR state + review level for the
-visible rows. Set `GITHUB_TOKEN` (or be logged in via `gh`) to raise the API
-rate limit above 60/hour.
+Pick a spec from the dropdown (defaults to `luke-jr/tmp` @ `knots-spec`), or set
+`repo`/`ref` to browse your own fork. Click the legend chips to filter by state
+or canonical bucket, click column headers to sort, and **fetch GitHub status
+(shown)** to pull live PR state + 0-3 review level for the visible rows.
 
-Bulk-prefetch into the cache instead of clicking (recommended for a whole spec):
+Auth uses `GITHUB_TOKEN`, falling back to `gh auth token`; without either the
+GitHub limit is 60 requests/hour. Bulk-prefetch a whole spec into the cache:
 
 ```bash
-.venv/bin/python -m bosun.github --file knots-next-29.spec   # all referenced PRs
+.venv/bin/python -m bosun.github --file knots-next-29.spec
 ```
 
-### CLI (pure stdlib, no install)
+## CLI (pure stdlib, no install)
 
 ```bash
-# Summary: active vs candidate merges, by section and canonical bucket
 python3 -m bosun.spec testdata/knots-next-29.spec --summary
-
-# Candidates in a given bucket
 python3 -m bosun.spec testdata/knots-next-29.spec --norm needs-review
-
-# Structured dump
 python3 -m bosun.spec testdata/knots-next-29.spec --json
 ```
 
-## Roadmap
-
-- [x] **Status normalization** — collapse the ~200 freeform disposition strings
-  into canonical buckets.
-- [x] **GitHub ingestion** — live PR state + 0-3 review level via `github.py`,
-  shown next to the spec's triage tags.
-- [ ] **Tighten normalization** — the `other`/`untagged` buckets can be reduced.
-- [ ] **Review via PR reviews too** — also parse the `/pulls/{n}/reviews`
-  endpoint, not just top-level issue comments.
-- [ ] **Cross-fork matrix** — same PR/patch, its review + merge status across
-  every tracked fork. The "compare a variety of forks" view.
-- [ ] **Persistence + richer UI** — a store behind the viewer, history over time.
-
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The ACK classifier in `bosun/ack.py` is adapted
+from Pierre Rochard's bitcoin-acks (MIT).
