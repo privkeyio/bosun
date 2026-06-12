@@ -36,7 +36,10 @@ _PAGE = """<!doctype html>
   :root { color-scheme: light dark; }
   body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 1rem 1.5rem; }
   h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
-  .sub { opacity: .7; margin-bottom: 1rem; }
+  .sub { opacity: .7; margin-bottom: .5rem; }
+  .legend { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+            font-size: .82rem; opacity: .9; margin-bottom: .75rem; }
+  .legend .pill { margin-right: .25rem; }
   .controls { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
               position: sticky; top: 0; background: Canvas; padding: .5rem 0; }
   input, select { font: inherit; padding: .3rem .5rem; }
@@ -56,7 +59,14 @@ _PAGE = """<!doctype html>
   .count { opacity: .6; font-weight: normal; }
 </style></head><body>
 <h1>bosun</h1>
-<div class="sub">%%TITLE%% · <span id="shown"></span></div>
+<div class="sub">%%TITLE%% · <span id="totals"></span> · <span id="shown"></span></div>
+<div class="legend">
+  <span><span class="pill active">●</span>active (in the build)</span>
+  <span><span class="pill cand">○</span>candidate (commented-out, under consideration)</span>
+  <span><span class="pill nack">○</span>rejected / broken</span>
+  <span>· <b>disposition</b> = maintainer's freeform triage note</span>
+  <span>· <b>PR</b> links to the source fork on GitHub</span>
+</div>
 <div class="controls">
   <input type="search" id="q" placeholder="search name / PR / status…">
   <select id="sect"><option value="">all sections</option>%%SECTIONS%%</select>
@@ -123,6 +133,8 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
 ["q","sect","state","merges"].forEach(id => {
   const el = $("#"+id); el.addEventListener(el.type === "checkbox" ? "change" : "input", render);
 });
+const _m = DATA.filter(d => d.kind === "merge");
+$("#totals").textContent = `${_m.filter(d => d.active).length} active, ${_m.filter(d => !d.active).length} candidates`;
 render();
 </script></body></html>"""
 
@@ -144,7 +156,7 @@ def build_html(entries, title: str) -> str:
 def _main() -> None:
     import argparse
     import os
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     ap = argparse.ArgumentParser(description="Browse a Knots spec in the browser.")
     ap.add_argument("spec")
@@ -175,7 +187,7 @@ def _main() -> None:
         def log_message(self, *a):
             pass
 
-    srv = HTTPServer(("127.0.0.1", args.port), Handler)
+    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"bosun serving {args.spec} at http://127.0.0.1:{args.port}  (Ctrl-C to stop)")
     try:
         srv.serve_forever()
