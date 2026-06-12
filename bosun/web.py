@@ -208,13 +208,30 @@ _PAGE = """<!doctype html>
   .cardhead { display: flex; justify-content: space-between; align-items: center;
               position: sticky; top: 0; background: Canvas; padding-bottom: .5rem; }
   .x { background: none; border: none; font-size: 1.1rem; cursor: pointer; }
-  .cover { font-size: .82rem; opacity: .7; margin-bottom: .3rem; }
-  .sgrp { margin: 1rem 0; }
-  .sgrp h3 { font-size: .98rem; margin: 0 0 .1rem; }
-  .sgrp .desc { font-size: .82rem; opacity: .7; margin-bottom: .4rem; }
-  .sgrp .act { margin: .5rem 0; display: flex; gap: .5rem; flex-wrap: wrap; }
-  .se { padding: .18rem 0; border-bottom: 1px solid #8882; font-size: .9rem; }
-  .se .muted { opacity: .6; font-size: .85em; }
+  .cover { font-size: .82rem; opacity: .7; margin-bottom: .5rem; }
+  .desc { font-size: .82rem; opacity: .7; }
+  .muted { opacity: .6; }
+  .cleanup { display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+             background: #2b6cb022; border: 1px solid #2b6cb055; border-radius: .5rem;
+             padding: .6rem .8rem; margin: .4rem 0 .9rem; }
+  .dlbtn { background: #2b6cb0; color: #fff; border: none; border-radius: .4rem;
+           padding: .45rem .9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .sg-merged{--c:#7c3aed} .sg-closed{--c:#c03030} .sg-ready{--c:#2a8a2a}
+  .sg-contested{--c:#c88811} .sg-stale{--c:#888}
+  .scard { border-left: 4px solid var(--c); background: #80808014; border-radius: .4rem;
+           padding: .55rem .8rem; margin: .7rem 0; }
+  .scard-h { display: flex; align-items: center; gap: .5rem; margin-bottom: .15rem; }
+  .scard-h h3 { margin: 0; font-size: 1rem; }
+  .sicon { width: 1.35rem; height: 1.35rem; display: inline-flex; align-items: center;
+           justify-content: center; border-radius: 50%; background: var(--c); color: #fff;
+           font-size: .8rem; font-weight: 700; }
+  .sbadge { margin-left: auto; background: var(--c); color: #fff; border-radius: 1rem;
+            padding: .05rem .6rem; font-weight: 600; font-size: .85rem; }
+  .se { display: grid; grid-template-columns: 4.5rem 1fr auto; gap: .5rem; align-items: baseline;
+        padding: .22rem 0; border-bottom: 1px solid #8882; font-size: .9rem; }
+  .se:last-child { border-bottom: none; }
+  .se-pr { font-family: ui-monospace, monospace; }
+  .se-meta { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
 </style></head><body>
 
 <header class="topbar">
@@ -508,19 +525,24 @@ function maybeAutoFetch() {
 }
 
 const SUG_GROUPS = [
-  ["merged_upstream", "Merged upstream", "These PRs were merged into their source repo. If you still track upstream they arrive via the base; otherwise pull them in. The candidate line is likely redundant."],
-  ["closed_upstream", "Closed upstream", "Closed without merging — usually abandoned or rejected. Good removal candidates."],
-  ["ready", "Ready to promote", "Open, at least one solid review, no NACK. Consider including in the build."],
-  ["contested", "Contested", "Has NACKs — needs a decision before acting."],
-  ["stale", "Stale", "Open but no upstream activity in over a year. Worth revisiting."],
+  ["merged_upstream", "Merged upstream", "↑", "sg-merged", "Now merged into the source repo — the candidate line is likely redundant (or pull it in)."],
+  ["closed_upstream", "Closed upstream", "✕", "sg-closed", "Closed without merging — usually abandoned or rejected. Safe to remove."],
+  ["ready", "Ready to promote", "✓", "sg-ready", "Open, at least one solid review, no NACK. Consider including in the build."],
+  ["contested", "Contested", "!", "sg-contested", "Has NACKs — needs a decision before acting."],
+  ["stale", "Stale", "⏳", "sg-stale", "Open but no upstream activity in over a year. Worth revisiting."],
 ];
 
 function sugEntry(e) {
   const pr = e.url ? `<a href="${e.url}" target="_blank"${e.pr_title ? ` title="${esc(e.pr_title)}"` : ""}>${esc(e.prnum)}</a>` : esc(e.prnum);
-  const meta = [e.review_level != null ? "L" + e.review_level : "", e.nacks ? e.nacks + " NACK" : "",
-                ago(e.updated_at)].filter(Boolean).join(" · ");
-  return `<div class="se">${pr} <b>${esc(e.name)}</b>${e.pr_title ? " — " + esc(e.pr_title) : ""}`
-    + (meta ? ` <span class="muted">(${meta})</span>` : "") + `</div>`;
+  const meta = [
+    e.pr_state ? `<span class="st st-${e.pr_state}">${e.pr_state}</span>` : "",
+    e.review_level != null ? `<span class="lv lv${e.review_level}">L${e.review_level}</span>` : "",
+    e.nacks ? `<span class="st st-closed">${e.nacks} NACK</span>` : "",
+    e.updated_at ? `<span class="age">${ago(e.updated_at)}</span>` : "",
+  ].filter(Boolean).join(" ");
+  return `<div class="se"><span class="se-pr">${pr}</span>`
+    + `<span class="se-name">${esc(e.name)}${e.pr_title ? ` <span class="muted">— ${esc(e.pr_title)}</span>` : ""}</span>`
+    + `<span class="se-meta">${meta}</span></div>`;
 }
 
 async function openSuggest() {
@@ -532,13 +554,17 @@ async function openSuggest() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     let html = `<div class="cover">Based on <b>${j.known}</b> of ${j.total} candidates with fetched status.`
-      + (j.known < j.total ? ` Turn on auto-fetch or click “fetch status” for fuller coverage.` : "") + `</div>`;
+      + (j.known < j.total ? ` Enable auto-fetch or click “fetch status” for fuller coverage.` : "") + `</div>`;
     const rm = j.merged_upstream.length + j.closed_upstream.length;
-    if (rm) html += `<div class="act"><button id="dldiff">download spec-cleanup .diff (${rm} lines)</button></div>`;
-    for (const [key, title, desc] of SUG_GROUPS) {
+    if (rm) html += `<div class="cleanup"><div><b>Spec cleanup</b>`
+      + `<div class="desc">${rm} candidate lines for PRs no longer open upstream (merged or closed).</div></div>`
+      + `<button id="dldiff" class="dlbtn">download .diff</button></div>`;
+    for (const [key, title, icon, cls, desc] of SUG_GROUPS) {
       const rows = j[key] || [];
-      html += `<div class="sgrp"><h3>${title} <span class="muted">(${rows.length})</span></h3>`
-        + `<div class="desc">${desc}</div>` + rows.map(sugEntry).join("") + `</div>`;
+      html += `<div class="scard ${cls}"><div class="scard-h">`
+        + `<span class="sicon">${icon}</span><h3>${title}</h3><span class="sbadge">${rows.length}</span></div>`
+        + `<div class="desc">${desc}</div>`
+        + (rows.length ? rows.map(sugEntry).join("") : `<div class="muted">none</div>`) + `</div>`;
     }
     $("#sugbody").innerHTML = html;
     const dl = document.getElementById("dldiff");
