@@ -14,7 +14,7 @@ from dataclasses import asdict
 
 from flask import Flask, Response, jsonify, request
 
-from . import source
+from . import source, suggest
 from .github import RateLimited, _read_cache, pr_status, pr_url, resolve_pr
 from .spec import parse_spec
 
@@ -68,6 +68,46 @@ def api_entries():
         return jsonify(file=file, entries=[_entry_dict(e) for e in parse_spec(text)])
     except Exception as e:
         return jsonify(error=str(e)), 502
+
+
+_SUG_FIELDS = ("prnum", "name", "pr_title", "url", "lineno", "pr_state",
+               "review_level", "acks", "nacks", "updated_at", "status")
+
+
+@app.get("/api/suggest")
+def api_suggest():
+    repo = request.args.get("repo", source.DEFAULT_REPO)
+    ref = request.args.get("ref", source.DEFAULT_REF)
+    file = request.args.get("file")
+    if not file:
+        return jsonify(error="file parameter required"), 400
+    try:
+        entries = [_entry_dict(e) for e in parse_spec(source.fetch_spec(repo, ref, file))]
+    except Exception as e:
+        return jsonify(error=str(e)), 502
+    cats = suggest.categorize(entries)
+    slim = {k: [{f: e.get(f) for f in _SUG_FIELDS} for e in v]
+            for k, v in cats.items() if isinstance(v, list)}
+    return jsonify(known=cats["known"], total=cats["total"], **slim)
+
+
+@app.get("/api/cleanup.diff")
+def api_cleanup_diff():
+    repo = request.args.get("repo", source.DEFAULT_REPO)
+    ref = request.args.get("ref", source.DEFAULT_REF)
+    file = request.args.get("file")
+    if not file:
+        return Response("file parameter required\n", status=400, mimetype="text/plain")
+    include = [s for s in request.args.get("include", "merged,closed").split(",") if s]
+    try:
+        text = source.fetch_spec(repo, ref, file)
+        cats = suggest.categorize([_entry_dict(e) for e in parse_spec(text)])
+    except Exception as e:
+        return Response(f"error: {e}\n", status=502, mimetype="text/plain")
+    linenos = {e["lineno"] for short in include
+               for e in cats.get(suggest.REMOVABLE.get(short, ""), [])}
+    diff = suggest.cleanup_diff(text, linenos, file) or "# nothing to remove\n"
+    return Response(diff, mimetype="text/plain")
 
 
 @app.get("/api/pr")
@@ -157,6 +197,21 @@ _PAGE = """<!doctype html>
   .age { opacity: .65; font-size: .85em; white-space: nowrap; }
   tr.drop td { opacity: .45; } tr.drop:hover td { opacity: .72; }
   .empty { text-align: center; padding: 1.5rem; opacity: .6; }
+  #suggest { background: #2b6cb033; }
+  .modal { display: none; position: fixed; inset: 0; background: #0007;
+           align-items: flex-start; justify-content: center; z-index: 10; padding: 3vh 1rem; }
+  .modal .card { background: Canvas; border: 1px solid var(--line); border-radius: .6rem;
+                 max-width: 860px; width: 100%; max-height: 90vh; overflow: auto; padding: 1rem 1.2rem; }
+  .cardhead { display: flex; justify-content: space-between; align-items: center;
+              position: sticky; top: 0; background: Canvas; padding-bottom: .5rem; }
+  .x { background: none; border: none; font-size: 1.1rem; cursor: pointer; }
+  .cover { font-size: .82rem; opacity: .7; margin-bottom: .3rem; }
+  .sgrp { margin: 1rem 0; }
+  .sgrp h3 { font-size: .98rem; margin: 0 0 .1rem; }
+  .sgrp .desc { font-size: .82rem; opacity: .7; margin-bottom: .4rem; }
+  .sgrp .act { margin: .5rem 0; display: flex; gap: .5rem; flex-wrap: wrap; }
+  .se { padding: .18rem 0; border-bottom: 1px solid #8882; font-size: .9rem; }
+  .se .muted { opacity: .6; font-size: .85em; }
 </style></head><body>
 
 <header class="topbar">
@@ -188,6 +243,8 @@ _PAGE = """<!doctype html>
     <button id="fetchgh" title="Fetch live PR state + ACK level for the rows shown">fetch status (shown)</button>
     <button id="refresh" title="Re-fetch shown rows, ignoring the cache">↻ refresh shown</button>
     <button id="exportcsv" title="Download the shown rows as CSV">export CSV</button>
+    <hr>
+    <button id="suggest" title="Actionable maintenance suggestions + a spec-cleanup diff">★ suggestions</button>
   </aside>
 
   <main>
@@ -203,6 +260,11 @@ _PAGE = """<!doctype html>
     </tr></thead><tbody id="rows"></tbody></table></div>
   </main>
 </div>
+
+<div id="sugmodal" class="modal"><div class="card">
+  <div class="cardhead"><b>Spec suggestions</b><button id="sugclose" class="x">✕</button></div>
+  <div id="sugbody"></div>
+</div></div>
 
 <script>
 let DATA = [], sortKey = "section", sortDir = 1, pendingSect = null;
@@ -440,6 +502,50 @@ function maybeAutoFetch() {
   autoTimer = setTimeout(() => fetchGh(false, true), 500);
 }
 
+const SUG_GROUPS = [
+  ["merged_upstream", "Merged upstream", "These PRs were merged into their source repo. If you still track upstream they arrive via the base; otherwise pull them in. The candidate line is likely redundant."],
+  ["closed_upstream", "Closed upstream", "Closed without merging — usually abandoned or rejected. Good removal candidates."],
+  ["ready", "Ready to promote", "Open, at least one solid review, no NACK. Consider including in the build."],
+  ["contested", "Contested", "Has NACKs — needs a decision before acting."],
+  ["stale", "Stale", "Open but no upstream activity in over a year. Worth revisiting."],
+];
+
+function sugEntry(e) {
+  const pr = e.url ? `<a href="${e.url}" target="_blank"${e.pr_title ? ` title="${esc(e.pr_title)}"` : ""}>${esc(e.prnum)}</a>` : esc(e.prnum);
+  const meta = [e.review_level != null ? "L" + e.review_level : "", e.nacks ? e.nacks + " NACK" : "",
+                ago(e.updated_at)].filter(Boolean).join(" · ");
+  return `<div class="se">${pr} <b>${esc(e.name)}</b>${e.pr_title ? " — " + esc(e.pr_title) : ""}`
+    + (meta ? ` <span class="muted">(${meta})</span>` : "") + `</div>`;
+}
+
+async function openSuggest() {
+  const repo = $("#repo").value.trim(), ref = $("#ref").value.trim(), file = $("#spec").value;
+  $("#sugmodal").style.display = "flex";
+  $("#sugbody").innerHTML = "loading…";
+  try {
+    const r = await fetch(`/api/suggest?repo=${encodeURIComponent(repo)}&ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(file)}`);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    let html = `<div class="cover">Based on <b>${j.known}</b> of ${j.total} candidates with fetched status.`
+      + (j.known < j.total ? ` Turn on auto-fetch or click “fetch status” for fuller coverage.` : "") + `</div>`;
+    const rm = j.merged_upstream.length + j.closed_upstream.length;
+    if (rm) html += `<div class="act"><button id="dldiff">download spec-cleanup .diff (${rm} lines)</button></div>`;
+    for (const [key, title, desc] of SUG_GROUPS) {
+      const rows = j[key] || [];
+      html += `<div class="sgrp"><h3>${title} <span class="muted">(${rows.length})</span></h3>`
+        + `<div class="desc">${desc}</div>` + rows.map(sugEntry).join("") + `</div>`;
+    }
+    $("#sugbody").innerHTML = html;
+    const dl = document.getElementById("dldiff");
+    if (dl) dl.onclick = () => {
+      const a = document.createElement("a");
+      a.href = `/api/cleanup.diff?repo=${encodeURIComponent(repo)}&ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(file)}&include=merged,closed`;
+      a.download = (file || "bosun").replace(/[^a-z0-9.-]/gi, "_") + ".cleanup.diff";
+      a.click();
+    };
+  } catch (e) { $("#sugbody").textContent = "error: " + e.message; }
+}
+
 function exportCsv() {
   const cols = ["active", "section", "prnum", "name", "status_norm", "status",
                 "pr_state", "review_level", "acks", "nacks", "updated_at", "commit", "upstream"];
@@ -507,6 +613,9 @@ $("#url").addEventListener("paste", () => setTimeout(loadUrl, 0));
 $("#fetchgh").onclick = () => fetchGh(false);
 $("#refresh").onclick = () => fetchGh(true);
 $("#exportcsv").onclick = exportCsv;
+$("#suggest").onclick = openSuggest;
+$("#sugclose").onclick = () => $("#sugmodal").style.display = "none";
+$("#sugmodal").onclick = e => { if (e.target.id === "sugmodal") $("#sugmodal").style.display = "none"; };
 $("#clearf").onclick = () => {
   Object.values(sel).forEach(s => s.clear());
   $("#q").value = ""; $("#sect").value = "";
