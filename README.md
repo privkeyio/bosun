@@ -8,8 +8,8 @@ queryable view and pairs it with live PR state and review level from GitHub, so
 you can see at a glance where each PR stands across `bitcoin/bitcoin`,
 `bitcoin-core/gui`, `bitcoinknots/bitcoin`, and any fork.
 
-The core (`spec` / `source` / `github` / `ack` / `suggest` / `report`) is pure
-stdlib; only the web UI needs Flask.
+The core (`spec` / `source` / `github` / `ack` / `suggest` / `report` / `daggy`)
+is pure stdlib; only the web UI needs Flask.
 
 ## Web app
 
@@ -40,6 +40,27 @@ ACKs), contested PRs, and dead candidates — from the cached status above:
 python3 -m bosun.report --file knots-next-29.spec          # prints markdown
 python3 -m bosun.report --file knots-next-29.spec -o digest.md
 ```
+
+## Daggy-fix helper (for the traditional-git model)
+
+For the proposed DAG-native Knots model, the core operation is: develop a fix on
+master, rebase it back to the oldest affected commit, then merge it forward into
+each live branch. This automates the two parts that aren't trivial:
+
+```bash
+# Where do I rebase back to? Bisect to the bug-introducing commit using a
+# regression test (exit 0 = bug absent). --test-paths injects a new test file
+# from the fix branch at each step.
+python3 -m bosun.daggy -C /path/to/knots find \
+    --good v27.0 --bad master --test "ctest -R my_regression" \
+    --fix-branch my-fix --test-paths src/test/foo_tests.cpp
+
+# Does the fix merge cleanly into each live branch? (dry-run, throwaway worktrees)
+python3 -m bosun.daggy -C /path/to/knots forward --fix my-fix --branches 29.x 30.x master
+```
+
+`find` is read-only (it only identifies a commit); `forward` never touches the
+working tree. The merging itself is left to plain git.
 
 ## CLI (pure stdlib, no install)
 
