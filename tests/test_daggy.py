@@ -108,8 +108,30 @@ def demo_forward() -> bool:
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def demo_not_ancestor() -> bool:
+    """If --good isn't an ancestor of --bad (e.g. two assembled release tags),
+    bisect can't converge — the tool should say why, clearly, up front."""
+    repo = tempfile.mkdtemp(prefix="bosun-daggy-demo-")
+    try:
+        _init(repo)
+        _write(repo, "f", "base\n"); _commit(repo, "base")
+        git(repo, "checkout", "-q", "-b", "sidebranch")
+        _write(repo, "f", "side\n"); _commit(repo, "side commit")   # not an ancestor of master
+        git(repo, "checkout", "-q", "master")
+        _write(repo, "f", "main\n"); _commit(repo, "main commit")
+
+        print("== find: --good not an ancestor of --bad (should fail clearly) ==")
+        out = daggy(repo, "find", "--good", "sidebranch", "--bad", "master", "--test", "true")
+        print(out.strip())
+        ok = "is not an ancestor" in out
+        print(f"{'PASS' if ok else 'FAIL'}: expected a clear 'not an ancestor' message\n")
+        return ok
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def main() -> None:
-    results = [demo_find(), demo_forward()]
+    results = [demo_find(), demo_forward(), demo_not_ancestor()]
     if all(results):
         print("ALL PASS")
         sys.exit(0)

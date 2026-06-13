@@ -34,6 +34,11 @@ def _is_repo(repo) -> bool:
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+def _is_ancestor(repo, a, b) -> bool:
+    return subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", a, b],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
 def find(repo, good, bad, test_cmd, test_paths, fix_branch) -> str | None:
     """Bisect between `good` (test passes) and `bad` (test fails) to find the
     first commit where the regression test starts failing. Returns its SHA."""
@@ -105,6 +110,10 @@ def _main() -> None:
         sys.exit(f"not a git repo: {args.repo}")
 
     if args.cmd == "find":
+        if not _is_ancestor(args.repo, args.good, args.bad):
+            sys.exit(f"--good ({args.good}) is not an ancestor of --bad ({args.bad}); "
+                     "bisect needs a linear good->bad range. Pick a --good that is a true "
+                     "ancestor of --bad (assembled release tags often aren't).")
         sha = find(args.repo, args.good, args.bad, args.test, args.test_paths, args.fix_branch)
         if not sha:
             sys.exit("could not determine the bug-introducing commit (check --good/--bad and the test)")
