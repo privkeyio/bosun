@@ -62,6 +62,12 @@ python3 -m bosun.daggy -C /path/to/knots forward --fix my-fix --branches 29.x 30
 `find` is read-only (it only identifies a commit); `forward` never touches the
 working tree. The merging itself is left to plain git.
 
+See it work on a synthetic repo (no network, no Core build):
+
+```bash
+python3 tests/test_daggy.py
+```
+
 ## CLI (pure stdlib, no install)
 
 ```bash
