@@ -31,6 +31,21 @@ GitHub limit is 60 requests/hour. Bulk-prefetch a whole spec into the cache:
 .venv/bin/python -m bosun.github --file knots-next-29.spec
 ```
 
+## Hosted snapshot (GitHub Pages)
+
+GitHub Pages can't run the Flask app (no server), so `bosun.static_build` bakes a
+static snapshot: it reuses the same frontend and swaps the live `/api` calls for
+pre-generated JSON files. A scheduled Action ingests PR status and publishes to
+Pages, so visitors need no token.
+
+```bash
+.venv/bin/python -m bosun.static_build --ingest -o public   # build the snapshot
+python3 -m http.server -d public 8000                       # preview at :8000
+```
+
+Deploy is via `.github/workflows/deploy.yml` (push, daily cron, manual dispatch).
+Add published specs in `SPECS` in `bosun/static_build.py`.
+
 ## Maintenance digest (markdown, for the terminal)
 
 A one-command summary of what to act on — ready-to-promote shortlist (ranked by

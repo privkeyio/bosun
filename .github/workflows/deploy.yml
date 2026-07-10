@@ -1,0 +1,62 @@
+# Ingests PR status and builds the static Pages snapshot (bosun.static_build),
+# then deploys to GitHub Pages.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 5 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Restore PR-status cache
+        uses: actions/cache@v4
+        with:
+          path: .bosun-cache
+          key: bosun-cache-${{ github.run_id }}
+          restore-keys: bosun-cache-
+
+      - name: Build static snapshot
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOSUN_GH_TOKEN || secrets.GITHUB_TOKEN }}
+          BOSUN_CACHE: .bosun-cache
+          BOSUN_CACHE_TTL: '259200'   # 3 days; keeps daily runs under the token limit
+        run: python -m bosun.static_build --ingest -o public
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
