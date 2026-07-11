@@ -120,7 +120,7 @@ def _main() -> None:
         subj = _git(args.repo, "log", "-1", "--format=%h %s", sha).stdout.strip()
         print(f"\nbug introduced at: {subj}")
         print(f"rebase floor:      {sha}")
-        print(f"  rebase your fix onto this commit, then merge forward.")
+        print("  rebase your fix onto this commit, then merge forward.")
     elif args.cmd == "forward":
         print(f"merge-forward dry-run for {args.fix}:")
         for b in args.branches:
