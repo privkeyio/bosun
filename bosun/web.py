@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from ._logo import FAVICON as _FAVICON, LOGO as _LOGO
+
 from flask import Flask, Response, jsonify, request
 
 from . import source, suggest
@@ -128,16 +130,30 @@ _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bosun</title>
+<link rel="icon" type="image/png" href="%%FAVICON%%">
 <style>
-  :root { color-scheme: light dark; --line: #8883; }
+  :root { color-scheme: light dark; --line: #8883; --accent: #2f5488; --ctl: #80808018; }
   * { box-sizing: border-box; }
   body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: .9rem 1.2rem; }
-  input, select, button { font: inherit; padding: .3rem .5rem; }
-  button { cursor: pointer; }
+  input:not([type=checkbox]), select, button { font: inherit; color: inherit; padding: .34rem .6rem;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--ctl); }
+  button { cursor: pointer; transition: background .12s, border-color .12s; }
+  button:not(.chip):hover { background: #80808030; border-color: #8886; }
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px; }
+  select { appearance: none; -webkit-appearance: none; padding-right: 1.7rem;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="%23888"/></svg>');
+    background-repeat: no-repeat; background-position: right .55rem center; }
 
   .topbar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap;
             padding-bottom: .7rem; border-bottom: 1px solid var(--line); margin-bottom: .9rem; }
-  .topbar h1 { font-size: 1.15rem; margin: 0; }
+  .topbar h1 { font-size: 1.2rem; margin: 0; font-weight: 700; letter-spacing: .005em; line-height: 1.05; }
+  .topbar .logo { width: 56px; height: 56px; border-radius: 7px; display: block;
+                  box-shadow: 0 1px 3px #0004; }
+  .topbar { border-bottom: 2px solid #2b4a7a55; }
+  .brand { display: flex; flex-direction: column; }
+  .brand .tag { font-size: .7rem; opacity: .55; letter-spacing: .01em; }
+  .topbar .spec { margin-left: auto; display: inline-flex; align-items: center; gap: .5rem; }
   #url { flex: 1; min-width: 18rem; }
   .topbar .spec select { min-width: 12rem; }
   details.src { font-size: .85rem; }
@@ -200,7 +216,8 @@ _PAGE = """<!doctype html>
   .age { opacity: .65; font-size: .85em; white-space: nowrap; }
   tr.drop td { opacity: .45; } tr.drop:hover td { opacity: .72; }
   .empty { text-align: center; padding: 1.5rem; opacity: .6; }
-  #suggest { background: #2b6cb033; }
+  #suggest { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  #suggest:hover { filter: brightness(1.12); background: var(--accent); }
   .modal { display: none; position: fixed; inset: 0; background: #0007;
            align-items: flex-start; justify-content: center; z-index: 10; padding: 3vh 1rem; }
   .modal .card { background: Canvas; border: 1px solid var(--line); border-radius: .6rem;
@@ -221,6 +238,11 @@ _PAGE = """<!doctype html>
   .scard { border-left: 4px solid var(--c); background: #80808014; border-radius: .4rem;
            padding: .55rem .8rem; margin: .7rem 0; }
   .scard-h { display: flex; align-items: center; gap: .5rem; margin-bottom: .15rem; }
+  details.scard > summary.scard-h { cursor: pointer; list-style: none; margin-bottom: 0; }
+  details.scard[open] > summary.scard-h { margin-bottom: .3rem; }
+  details.scard > summary::-webkit-details-marker { display: none; }
+  details.scard > summary.scard-h::after { content: "▸"; margin-left: .4rem; opacity: .45; transition: transform .12s; }
+  details.scard[open] > summary.scard-h::after { transform: rotate(90deg); }
   .scard-h h3 { margin: 0; font-size: 1rem; }
   .sicon { width: 1.35rem; height: 1.35rem; display: inline-flex; align-items: center;
            justify-content: center; border-radius: 50%; background: var(--c); color: #fff;
@@ -236,10 +258,11 @@ _PAGE = """<!doctype html>
 
 <header class="topbar">
   <button id="togglepanel" class="toggle" title="Show/hide filters">☰</button>
-  <h1>bosun</h1>
+  <img class="logo" src="%%LOGO%%" alt="" width="56" height="56">
+  <div class="brand"><h1>bosun</h1><span class="tag">PR triage across Bitcoin forks</span></div>
   <input id="url" type="url" placeholder="paste a GitHub spec URL: https://github.com/<owner>/<repo>/blob/<ref>/<file>.spec">
   <button id="go">load</button>
-  <label class="spec">spec <select id="spec"></select></label>
+  <label class="spec"><select id="spec"></select></label>
   <details class="src">
     <summary>source</summary>
     <label>repo <input id="repo" value="%%REPO%%"></label>
@@ -571,10 +594,11 @@ async function openSuggest() {
       + `<button id="dldiff" class="dlbtn">download .diff</button></div>`;
     for (const [key, title, icon, cls, desc] of SUG_GROUPS) {
       const rows = j[key] || [];
-      html += `<div class="scard ${cls}"><div class="scard-h">`
-        + `<span class="sicon">${icon}</span><h3>${title}</h3><span class="sbadge">${rows.length}</span></div>`
+      const op = "";  // all sections collapsed by default
+      html += `<details class="scard ${cls}"${op}><summary class="scard-h">`
+        + `<span class="sicon">${icon}</span><h3>${title}</h3><span class="sbadge">${rows.length}</span></summary>`
         + `<div class="desc">${desc}</div>`
-        + (rows.length ? rows.map(sugEntry).join("") : `<div class="muted">none</div>`) + `</div>`;
+        + (rows.length ? rows.map(sugEntry).join("") : `<div class="muted">none</div>`) + `</details>`;
     }
     $("#sugbody").innerHTML = html;
     const dl = document.getElementById("dldiff");
@@ -675,6 +699,8 @@ const _saved = restoreState();
 pendingSect = (_saved && _saved.sect) || null;
 loadSpecs(_saved && _saved.spec);
 </script></body></html>"""
+
+_PAGE = _PAGE.replace("%%LOGO%%", _LOGO).replace("%%FAVICON%%", _FAVICON)
 
 
 def _main() -> None:

@@ -95,9 +95,10 @@ $("#suggest").onclick = async function () {
       + `<a class="dlbtn" href="data/${slug}.cleanup.diff" download="${slug}.cleanup.diff">download .diff</a></div>`;
     for (const [key, title, icon, cls, desc] of SUG_GROUPS) {
       const rows = j[key] || [];
-      html += `<div class="scard ${cls}"><div class="scard-h"><span class="sicon">${icon}</span>`
-        + `<h3>${title}</h3><span class="sbadge">${rows.length}</span></div><div class="desc">${desc}</div>`
-        + (rows.length ? rows.map(sugEntry).join("") : `<div class="muted">none</div>`) + `</div>`;
+      const op = "";  // all sections collapsed by default
+      html += `<details class="scard ${cls}"${op}><summary class="scard-h"><span class="sicon">${icon}</span>`
+        + `<h3>${title}</h3><span class="sbadge">${rows.length}</span></summary><div class="desc">${desc}</div>`
+        + (rows.length ? rows.map(sugEntry).join("") : `<div class="muted">none</div>`) + `</details>`;
     }
     $("#sugbody").innerHTML = html;
   } catch (e) { $("#sugbody").textContent = "error: " + e.message; }
