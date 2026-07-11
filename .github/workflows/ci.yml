@@ -1,0 +1,56 @@
+# Runs on every PR and push to main. Catches the kinds of breakage that only
+# showed up at deploy time: import/lint errors, and a static-build smoke test
+# run WITH a token present (which is what exposed the raw.githubusercontent.com
+# 404 that plain local builds missed).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install -r requirements.txt ruff pillow
+
+      - name: Lint (syntax + pyflakes)
+        run: ruff check --select E9,F bosun scripts tests
+
+      - name: Imports
+        run: python -c "import bosun.web, bosun.static_build, bosun.spec, bosun.source, bosun.github, bosun.ack, bosun.suggest, bosun.report, bosun.daggy"
+
+      - name: Unit tests
+        run: python tests/test_daggy.py
+
+      - name: Static build smoke test
+        # Run WITH a token in the env (as the deploy does) but WITHOUT --ingest,
+        # so it exercises the raw spec fetch + page render without needing rate
+        # limit headroom. This is the check that would have caught the 404.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m bosun.static_build -o /tmp/pub
+          test -f /tmp/pub/index.html
+          test -f /tmp/pub/data/index.json
+          test -f /tmp/pub/CNAME
+          if grep -q '%%' /tmp/pub/index.html; then
+            echo "::error::unreplaced %%placeholder%% in built index.html"; exit 1
+          fi
+
+      - name: Logo in sync with source image
+        run: |
+          python scripts/gen_logo.py
+          git diff --exit-code bosun/_logo.py \
+            || { echo "::error::bosun/_logo.py is stale; run scripts/gen_logo.py and commit"; exit 1; }
