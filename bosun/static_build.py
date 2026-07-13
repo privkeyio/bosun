@@ -24,7 +24,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import source, suggest
-from .github import _read_cache, pr_status, pr_url, resolve_pr
+from .github import RateLimited, _read_cache, pr_status, pr_url, resolve_pr
 from .spec import parse_spec
 from .web import _PAGE, KNOTS_REPO, knots_rows
 
@@ -62,6 +62,9 @@ def _ingest(entries) -> None:
             seen.add(r)
             try:
                 pr_status(*r)
+            except RateLimited:
+                print("rate limit hit; keeping cached status for the remaining PRs")
+                return
             except Exception:
                 pass
 
@@ -74,6 +77,9 @@ def _build_knots(data, ingest: bool) -> dict:
         for r in rows:
             try:
                 pr_status(KNOTS_REPO, r["lineno"])
+            except RateLimited:
+                print("rate limit hit while ingesting Knots PRs; keeping cached status")
+                break
             except Exception:
                 pass
         rows = knots_rows(KNOTS_REPO)  # re-read with the cache now warm
