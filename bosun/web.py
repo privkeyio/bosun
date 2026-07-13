@@ -236,6 +236,7 @@ _PAGE = """<!doctype html>
   .lv { display: inline-block; font-size: .78em; padding: .08rem .4rem; border-radius: .5rem; background:#8888882a; }
   .lv2 { background:#c8881144 } .lv3 { background:#2a8a2a55 } .nackt { color:#c03030 }
   .src-core{background:#2b6cb055} .src-knots{background:#c8811155} .src-gui{background:#7c3aed55}
+  .lbl{background:#80808026}
 
   .sub { opacity: .7; margin-bottom: .4rem; font-size: .9rem; }
   #status { font-style: italic; }
@@ -321,6 +322,7 @@ _PAGE = """<!doctype html>
     <input type="search" id="q" placeholder="search…  ( / )">
     <div class="fgroup" id="wrap-quick"><div class="fhead">Quick</div><div class="fchips" id="g-quick"></div></div>
     <div class="fgroup" id="wrap-source"><div class="fhead">Source</div><div class="fchips" id="g-source"></div></div>
+    <div class="fgroup" id="wrap-labels"><div class="fhead">Labels</div><div class="fchips" id="g-labels"></div></div>
     <div class="fgroup" id="wrap-state"><div class="fhead">State</div><div class="fchips" id="g-state"></div></div>
     <div class="fgroup" id="wrap-bucket"><div class="fhead">Disposition</div><div class="fchips" id="g-bucket"></div></div>
     <div class="fgroup" id="wrap-prstate"><div class="fhead">PR state</div><div class="fchips" id="g-prstate"></div></div>
@@ -373,8 +375,8 @@ function nameCell(d) {
   return primary + extra;
 }
 
-const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), source: new Set(), ready: new Set(), nack: new Set() };
-const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level, source: sel.source, ready: sel.ready, nack: sel.nack }[kind]);
+const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), source: new Set(), labels: new Set(), ready: new Set(), nack: new Set() };
+const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level, source: sel.source, labels: sel.labels, ready: sel.ready, nack: sel.nack }[kind]);
 // A tested ACK (or two utACKs) and no NACK on an open PR — the "good to merge" set.
 const isReady = d => d.pr_state === "open" && d.review_level === 3 && !(d.nacks > 0);
 // Source repo from the spec PR token: numeric -> Core, k### -> Knots, g### -> GUI.
@@ -430,6 +432,12 @@ function buildLegend() {
   const sc = tally(merges, "source");
   fillGroup("#g-source", ["core", "knots", "gui"].filter(s => sc[s])
     .map(s => ["source", s, SRC_LABEL[s], sc[s], "src-" + s]));
+
+  const lc = {};
+  merges.forEach(d => (d.labels || []).forEach(l => { lc[l] = (lc[l] || 0) + 1; }));
+  const lkeys = Object.keys(lc).sort((a, b) => lc[b] - lc[a]);
+  $("#wrap-labels").style.display = lkeys.length ? "" : "none";  // only the PR view carries labels
+  fillGroup("#g-labels", lkeys.map(l => ["labels", l, l, lc[l], "lbl"]));
   fillGroup("#g-bucket", Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => ["bucket", b, b, bc[b], "n-" + b]));
 
   const psKeys = ["open", "merged", "closed", "missing"].filter(s => ps[s]);
@@ -457,7 +465,7 @@ function syncChips() {
 function applyFilter(spec) {
   Object.values(sel).forEach(s => s.clear());
   $("#q").value = ""; $("#sect").value = ""; $("#merges").checked = true;
-  for (const k of ["states", "prstate", "level", "buckets", "source", "ready", "nack"])
+  for (const k of ["states", "prstate", "level", "buckets", "source", "labels", "ready", "nack"])
     (spec[k] || []).forEach(v => sel[k].add(String(v)));
   syncChips(); render();
 }
@@ -503,7 +511,7 @@ function saveState() {
       collapsed: document.body.classList.contains("panel-collapsed"),
       buckets: [...sel.buckets], states: [...sel.states],
       prstate: [...sel.prstate], level: [...sel.level], source: [...sel.source],
-      ready: [...sel.ready], nack: [...sel.nack],
+      labels: [...sel.labels], ready: [...sel.ready], nack: [...sel.nack],
     }));
   } catch (e) {}
 }
@@ -519,7 +527,7 @@ function restoreState() {
   if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
   sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
   sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
-  sel.source = new Set(st.source || []);
+  sel.source = new Set(st.source || []); sel.labels = new Set(st.labels || []);
   sel.ready = new Set(st.ready || []); sel.nack = new Set(st.nack || []);
   return st;
 }
@@ -542,13 +550,19 @@ function filtered() {
     if (sel.prstate.size && !sel.prstate.has(d.pr_state)) return false;
     if (sel.level.size && !sel.level.has(String(d.review_level))) return false;
     if (sel.source.size && !sel.source.has(d.source)) return false;
+    if (sel.labels.size && !(d.labels || []).some(l => sel.labels.has(l))) return false;
     if (sel.ready.size && !isReady(d)) return false;
     if (sel.nack.size && !(d.nacks > 0)) return false;
     if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""} ${d.pr_title||""}`.toLowerCase().includes(q)) return false;
     return true;
   });
-  rows.sort((a, b) => ((a[sortKey] ?? "") + "").localeCompare((b[sortKey] ?? "") + "",
-    undefined, {numeric: true}) * sortDir);
+  if (sortKey === "review_level") {  // strongest first, then by raw ACK count
+    const k = d => (d.review_level ?? -1) * 1000 + (d.acks || 0);
+    rows.sort((a, b) => (k(a) - k(b)) * sortDir);
+  } else {
+    rows.sort((a, b) => ((a[sortKey] ?? "") + "").localeCompare((b[sortKey] ?? "") + "",
+      undefined, {numeric: true}) * sortDir);
+  }
   return rows;
 }
 
@@ -685,7 +699,7 @@ async function openSuggest() {
 }
 
 function exportCsv() {
-  const cols = ["active", "section", "prnum", "source", "name", "status_norm", "status",
+  const cols = ["active", "section", "prnum", "source", "name", "labels", "status_norm", "status",
                 "pr_state", "review_level", "acks", "nacks", "updated_at", "commit", "upstream"];
   const cell = v => { v = v == null ? "" : String(v); return /[",\\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const rows = filtered();
