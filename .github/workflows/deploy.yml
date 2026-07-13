@@ -42,7 +42,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.BOSUN_GH_TOKEN || secrets.GITHUB_TOKEN }}
           BOSUN_CACHE: .bosun-cache
-          BOSUN_CACHE_TTL: '259200'   # 3 days; keeps daily runs under the token limit
+          BOSUN_CACHE_TTL: '86400'    # 1 day; refresh ACKs each daily run (rate-limited fetches are caught + retried next run)
         run: python -m bosun.static_build --ingest -o public
 
       - name: Upload Pages artifact
