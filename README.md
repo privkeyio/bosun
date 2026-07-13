@@ -21,7 +21,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m bosun.web --repo me/tmp --ref my-specs   # default a fork
 ```
 
-Pick a spec from the dropdown (defaults to `luke-jr/tmp` @ `knots-spec`), or
+Pick a spec from the dropdown (defaults to
+[`luke-jr/tmp` @ `knots-spec`](https://github.com/luke-jr/tmp/tree/knots-spec)), or
 choose **★ open Knots PRs** to triage every open PR in `bitcoinknots/bitcoin`,
 including ones not yet in any spec. Filter by source (Core/Knots/GUI), GitHub
 labels, review level, or the **ready** quick-filter (open + tested ACK, no NACK);
