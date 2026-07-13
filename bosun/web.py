@@ -235,6 +235,7 @@ _PAGE = """<!doctype html>
   .st-closed{background:#c0303055} .st-missing,.st-unknown{background:#8888882a}
   .lv { display: inline-block; font-size: .78em; padding: .08rem .4rem; border-radius: .5rem; background:#8888882a; }
   .lv2 { background:#c8881144 } .lv3 { background:#2a8a2a55 } .nackt { color:#c03030 }
+  .src-core{background:#2b6cb055} .src-knots{background:#c8811155} .src-gui{background:#7c3aed55}
 
   .sub { opacity: .7; margin-bottom: .4rem; font-size: .9rem; }
   #status { font-style: italic; }
@@ -319,6 +320,7 @@ _PAGE = """<!doctype html>
   <aside class="panel">
     <input type="search" id="q" placeholder="search…  ( / )">
     <div class="fgroup" id="wrap-quick"><div class="fhead">Quick</div><div class="fchips" id="g-quick"></div></div>
+    <div class="fgroup" id="wrap-source"><div class="fhead">Source</div><div class="fchips" id="g-source"></div></div>
     <div class="fgroup" id="wrap-state"><div class="fhead">State</div><div class="fchips" id="g-state"></div></div>
     <div class="fgroup" id="wrap-bucket"><div class="fhead">Disposition</div><div class="fchips" id="g-bucket"></div></div>
     <div class="fgroup" id="wrap-prstate"><div class="fhead">PR state</div><div class="fchips" id="g-prstate"></div></div>
@@ -371,13 +373,18 @@ function nameCell(d) {
   return primary + extra;
 }
 
-const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), ready: new Set(), nack: new Set() };
-const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level, ready: sel.ready, nack: sel.nack }[kind]);
+const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), source: new Set(), ready: new Set(), nack: new Set() };
+const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level, source: sel.source, ready: sel.ready, nack: sel.nack }[kind]);
 // A tested ACK (or two utACKs) and no NACK on an open PR — the "good to merge" set.
 const isReady = d => d.pr_state === "open" && d.review_level === 3 && !(d.nacks > 0);
+// Source repo from the spec PR token: numeric -> Core, k### -> Knots, g### -> GUI.
+const SRC_LABEL = { core: "Core", knots: "Knots", gui: "GUI" };
+const prSource = p => { const m = /^([A-Za-z]?)\\d+$/.exec(p || "");
+  return m ? ({ "": "core", k: "knots", g: "gui" }[m[1].toLowerCase()] || null) : null; };
 
 function setData(arr) {
   DATA = arr;
+  DATA.forEach(d => d.source = prSource(d.prnum));
   const secs = [...new Set(DATA.filter(d => d.section).map(d => d.section))].sort();
   $("#sect").innerHTML = '<option value="">all sections</option>'
     + secs.map(s => `<option>${esc(s)}</option>`).join("");
@@ -402,7 +409,7 @@ function fillGroup(id, items) {
 
 function applyView() {
   const prs = VIEW === "prs";  // raw PR list: disposition/section/active aren't meaningful
-  ["#wrap-state", "#wrap-bucket", "#wrap-sect", "#row-merges"].forEach(s => $(s).style.display = prs ? "none" : "");
+  ["#wrap-source", "#wrap-state", "#wrap-bucket", "#wrap-sect", "#row-merges"].forEach(s => $(s).style.display = prs ? "none" : "");
 }
 
 function buildLegend() {
@@ -420,6 +427,9 @@ function buildLegend() {
   fillGroup("#g-quick", [["ready", "1", "✓ ready", ready, "st st-open"],
                          ["nack", "1", "! NACK", nacked, "st st-closed"]]);
   fillGroup("#g-state", [["state", "active", "● active", act], ["state", "cand", "○ candidate", cand]]);
+  const sc = tally(merges, "source");
+  fillGroup("#g-source", ["core", "knots", "gui"].filter(s => sc[s])
+    .map(s => ["source", s, SRC_LABEL[s], sc[s], "src-" + s]));
   fillGroup("#g-bucket", Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => ["bucket", b, b, bc[b], "n-" + b]));
 
   const psKeys = ["open", "merged", "closed", "missing"].filter(s => ps[s]);
@@ -447,7 +457,7 @@ function syncChips() {
 function applyFilter(spec) {
   Object.values(sel).forEach(s => s.clear());
   $("#q").value = ""; $("#sect").value = ""; $("#merges").checked = true;
-  for (const k of ["states", "prstate", "level", "buckets", "ready", "nack"])
+  for (const k of ["states", "prstate", "level", "buckets", "source", "ready", "nack"])
     (spec[k] || []).forEach(v => sel[k].add(String(v)));
   syncChips(); render();
 }
@@ -492,7 +502,7 @@ function saveState() {
       auto: $("#auto").checked, sortKey, sortDir,
       collapsed: document.body.classList.contains("panel-collapsed"),
       buckets: [...sel.buckets], states: [...sel.states],
-      prstate: [...sel.prstate], level: [...sel.level],
+      prstate: [...sel.prstate], level: [...sel.level], source: [...sel.source],
       ready: [...sel.ready], nack: [...sel.nack],
     }));
   } catch (e) {}
@@ -509,6 +519,7 @@ function restoreState() {
   if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
   sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
   sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
+  sel.source = new Set(st.source || []);
   sel.ready = new Set(st.ready || []); sel.nack = new Set(st.nack || []);
   return st;
 }
@@ -530,6 +541,7 @@ function filtered() {
     if (sel.states.size && !sel.states.has(d.active ? "active" : "cand")) return false;
     if (sel.prstate.size && !sel.prstate.has(d.pr_state)) return false;
     if (sel.level.size && !sel.level.has(String(d.review_level))) return false;
+    if (sel.source.size && !sel.source.has(d.source)) return false;
     if (sel.ready.size && !isReady(d)) return false;
     if (sel.nack.size && !(d.nacks > 0)) return false;
     if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""} ${d.pr_title||""}`.toLowerCase().includes(q)) return false;
@@ -673,7 +685,7 @@ async function openSuggest() {
 }
 
 function exportCsv() {
-  const cols = ["active", "section", "prnum", "name", "status_norm", "status",
+  const cols = ["active", "section", "prnum", "source", "name", "status_norm", "status",
                 "pr_state", "review_level", "acks", "nacks", "updated_at", "commit", "upstream"];
   const cell = v => { v = v == null ? "" : String(v); return /[",\\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const rows = filtered();
