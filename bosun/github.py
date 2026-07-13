@@ -108,15 +108,27 @@ def _cache_path(repo: str, num: int) -> Path:
     return CACHE_DIR / repo / f"{num}.json"
 
 
+# PR states that never change once reached — safe to reuse past the cache TTL
+# rather than re-fetching. (A reopened PR is rare and self-heals on a manual refresh.)
+_TERMINAL = ("merged", "closed", "missing")
+
+
+def _read_cache_raw(repo: str, num: int) -> dict | None:
+    """Cached entry ignoring TTL (schema-version checked). None if absent/stale-schema."""
+    p = _cache_path(repo, num)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if data.get("v") == CACHE_VERSION else None
+
+
 def _read_cache(repo: str, num: int) -> dict | None:
     p = _cache_path(repo, num)
     if p.exists() and (time.time() - p.stat().st_mtime) < CACHE_TTL:
-        try:
-            data = json.loads(p.read_text())
-        except (OSError, ValueError):
-            return None
-        if data.get("v") == CACHE_VERSION:
-            return data
+        return _read_cache_raw(repo, num)
     return None
 
 
@@ -126,6 +138,12 @@ def pr_status(repo: str, num: int, refresh: bool = False) -> dict:
         cached = _read_cache(repo, num)
         if cached is not None:
             return cached
+        # Terminal state past its TTL: reuse it (touch mtime to keep it display-fresh)
+        # instead of spending an API call — most spec PRs are already merged upstream.
+        stale = _read_cache_raw(repo, num)
+        if stale and stale.get("state") in _TERMINAL:
+            _write_cache(repo, num, stale)
+            return stale
 
     try:
         pr = _get(f"{API}/repos/{repo}/pulls/{num}")
