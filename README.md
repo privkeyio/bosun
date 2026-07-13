@@ -11,6 +11,8 @@ you can see at a glance where each PR stands across `bitcoin/bitcoin`,
 The core (`spec` / `source` / `github` / `ack` / `suggest` / `report` / `daggy`)
 is pure stdlib; only the web UI needs Flask.
 
+Live instance: <https://bosun.privkey.io>
+
 ## Web app
 
 ```bash
@@ -19,10 +21,13 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m bosun.web --repo me/tmp --ref my-specs   # default a fork
 ```
 
-Pick a spec from the dropdown (defaults to `luke-jr/tmp` @ `knots-spec`), or set
-`repo`/`ref` to browse your own fork. Click the legend chips to filter by state
-or canonical bucket, click column headers to sort, and **fetch GitHub status
-(shown)** to pull live PR state + 0-3 review level for the visible rows.
+Pick a spec from the dropdown (defaults to `luke-jr/tmp` @ `knots-spec`), or
+choose **★ open Knots PRs** to triage every open PR in `bitcoinknots/bitcoin`,
+including ones not yet in any spec. Filter by source (Core/Knots/GUI), GitHub
+labels, review level, or the **ready** quick-filter (open + tested ACK, no NACK);
+sort by any column; and **fetch GitHub status (shown)** to pull live PR state and
+the 0-3 review level for the visible rows. Or set `repo`/`ref` to browse your own
+fork.
 
 Auth uses `GITHUB_TOKEN`, falling back to `gh auth token`; without either the
 GitHub limit is 60 requests/hour. Bulk-prefetch a whole spec into the cache:
@@ -44,7 +49,8 @@ python3 -m http.server -d public 8000                       # preview at :8000
 ```
 
 Deploy is via `.github/workflows/deploy.yml` (push, daily cron, manual dispatch).
-Add published specs in `SPECS` in `bosun/static_build.py`.
+The open-Knots-PRs view is baked automatically; add more published specs in
+`SPECS` in `bosun/static_build.py`.
 
 ## Maintenance digest (markdown, for the terminal)
 
