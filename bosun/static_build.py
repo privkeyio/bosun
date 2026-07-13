@@ -162,6 +162,17 @@ def build(outdir: str, ingest: bool = False) -> None:
     data.mkdir(parents=True, exist_ok=True)
 
     index = {"generated": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "specs": []}
+
+    # Build the small, high-value PR view first so it gets a fresh rate-limit
+    # budget before the large spec ingest below. A failure here (e.g. a bad API
+    # token) must not take down the whole site — skip the view and keep going.
+    knots_entry = None
+    try:
+        knots_entry = _build_knots(data, ingest)
+    except Exception as e:
+        print(f"WARNING: skipping open-Knots-PRs view: {e}\n"
+              "  the API token is likely invalid/expired — check BOSUN_GH_TOKEN / GITHUB_TOKEN")
+
     for spec in SPECS:
         entries = parse_spec(source.fetch_spec(spec["repo"], spec["ref"], spec["file"]))
         if ingest:
@@ -187,7 +198,8 @@ def build(outdir: str, ingest: bool = False) -> None:
             "merges": len(merges), "known": cats["known"],
         })
 
-    index["specs"].insert(0, _build_knots(data, ingest))
+    if knots_entry:
+        index["specs"].insert(0, knots_entry)
     (data / "index.json").write_text(json.dumps(index))
     (out / "index.html").write_text(_static_html())
     (out / "CNAME").write_text(CNAME + "\n")
