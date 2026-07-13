@@ -26,7 +26,7 @@ from pathlib import Path
 from . import source, suggest
 from .github import _read_cache, pr_status, pr_url, resolve_pr
 from .spec import parse_spec
-from .web import _PAGE
+from .web import _PAGE, KNOTS_REPO, knots_rows
 
 # Specs published on the site. Add entries to publish more.
 SPECS = [
@@ -66,6 +66,28 @@ def _ingest(entries) -> None:
                 pass
 
 
+def _build_knots(data, ingest: bool) -> dict:
+    """Bake the "open Knots PRs" pseudo-spec (data/__knots__.*) and return its
+    index entry. Same JSON shape as a spec so the frontend needs no new loader."""
+    rows = knots_rows(KNOTS_REPO)
+    if ingest:
+        for r in rows:
+            try:
+                pr_status(KNOTS_REPO, r["lineno"])
+            except Exception:
+                pass
+        rows = knots_rows(KNOTS_REPO)  # re-read with the cache now warm
+    cats = suggest.categorize(rows)
+    slim = {k: [{f: e.get(f) for f in _SUG_FIELDS} for e in v]
+            for k, v in cats.items() if isinstance(v, list)}
+    (data / "__knots__.json").write_text(json.dumps({"file": "__knots__", "entries": rows}))
+    (data / "__knots__.suggest.json").write_text(
+        json.dumps({"known": cats["known"], "total": cats["total"], **slim}))
+    (data / "__knots__.cleanup.diff").write_text("# not applicable to the PR list\n")
+    return {"slug": "__knots__", "title": "★ open Knots PRs", "repo": KNOTS_REPO,
+            "ref": "-", "file": "__knots__", "merges": len(rows), "known": cats["known"]}
+
+
 _STATIC_CSS = """
   #url, #go, details.src, #auto, #fetchgh, #refresh { display: none !important; }
   .genat { opacity: .6; font-size: .78rem; margin-left: .5rem; }
@@ -76,6 +98,7 @@ _STATIC_CSS = """
 # (render, filters, legend, insights, sugEntry, ...) is reused unchanged.
 _STATIC_TAIL = r"""loadEntries = async function () {
   const slug = $("#spec").value; if (!slug) return;
+  VIEW = slug === "__knots__" ? "prs" : "spec";
   $("#status").textContent = "loading…";
   try {
     const j = await (await fetch("data/" + slug + ".json")).json();
@@ -164,6 +187,7 @@ def build(outdir: str, ingest: bool = False) -> None:
             "merges": len(merges), "known": cats["known"],
         })
 
+    index["specs"].insert(0, _build_knots(data, ingest))
     (data / "index.json").write_text(json.dumps(index))
     (out / "index.html").write_text(_static_html())
     (out / "CNAME").write_text(CNAME + "\n")

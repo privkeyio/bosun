@@ -17,7 +17,7 @@ from ._logo import FAVICON as _FAVICON, LOGO as _LOGO
 from flask import Flask, Response, jsonify, request
 
 from . import source, suggest
-from .github import RateLimited, _read_cache, pr_status, pr_url, resolve_pr
+from .github import RateLimited, _read_cache, list_open_prs, pr_status, pr_url, resolve_pr
 from .spec import parse_spec
 
 app = Flask(__name__)
@@ -38,6 +38,36 @@ def _entry_dict(e) -> dict:
     d["updated_at"] = status.get("updated_at") if status else None
     d["fetched"] = status.get("fetched") if status else None
     return d
+
+
+KNOTS_REPO = "bitcoinknots/bitcoin"
+
+
+def knots_rows(repo: str = KNOTS_REPO) -> list[dict]:
+    """Open PRs of a Knots repo shaped like spec entries so the same table,
+    filters and sort work. Review status is read cache-only (no network on load);
+    run the ingest to populate it."""
+    rows = []
+    for pr in list_open_prs(repo):
+        num = pr["num"]
+        s = _read_cache(repo, num)
+        rows.append({
+            "lineno": num, "section": None, "active": False, "kind": "merge",
+            "status": None, "status_norm": "untagged",
+            "prnum": f"k{num}", "name": "-",
+            "commit": None, "last": None, "upstream": None,
+            "conflict_patch": None, "comment": None, "raw": "",
+            "labels": pr["labels"],
+            "url": f"https://github.com/{repo}/pull/{num}",
+            "pr_state": s.get("state") if s else "open",
+            "review_level": s.get("review_level") if s else None,
+            "acks": s.get("acks") if s else None,
+            "nacks": s.get("nacks") if s else None,
+            "pr_title": (s.get("title") if s else None) or pr["title"],
+            "updated_at": (s.get("updated_at") if s else None) or pr["updated_at"],
+            "fetched": s.get("fetched") if s else None,
+        })
+    return rows
 
 
 @app.get("/")
@@ -110,6 +140,16 @@ def api_cleanup_diff():
                for e in cats.get(suggest.REMOVABLE.get(short, ""), [])}
     diff = suggest.cleanup_diff(text, linenos, file) or "# nothing to remove\n"
     return Response(diff, mimetype="text/plain")
+
+
+@app.get("/api/knots-prs")
+def api_knots_prs():
+    try:
+        return jsonify(entries=knots_rows())
+    except RateLimited as e:
+        return jsonify(error=str(e)), 429
+    except Exception as e:
+        return jsonify(error=str(e)), 502
 
 
 @app.get("/api/pr")
@@ -278,12 +318,13 @@ _PAGE = """<!doctype html>
 <div class="layout">
   <aside class="panel">
     <input type="search" id="q" placeholder="search…  ( / )">
-    <div class="fgroup"><div class="fhead">State</div><div class="fchips" id="g-state"></div></div>
-    <div class="fgroup"><div class="fhead">Disposition</div><div class="fchips" id="g-bucket"></div></div>
+    <div class="fgroup" id="wrap-quick"><div class="fhead">Quick</div><div class="fchips" id="g-quick"></div></div>
+    <div class="fgroup" id="wrap-state"><div class="fhead">State</div><div class="fchips" id="g-state"></div></div>
+    <div class="fgroup" id="wrap-bucket"><div class="fhead">Disposition</div><div class="fchips" id="g-bucket"></div></div>
     <div class="fgroup" id="wrap-prstate"><div class="fhead">PR state</div><div class="fchips" id="g-prstate"></div></div>
     <div class="fgroup" id="wrap-level"><div class="fhead">Review level</div><div class="fchips" id="g-level"></div></div>
-    <div class="fgroup"><div class="fhead">Section</div><select id="sect"><option value="">all sections</option></select></div>
-    <label class="frow"><input type="checkbox" id="merges" checked> merges only</label>
+    <div class="fgroup" id="wrap-sect"><div class="fhead">Section</div><select id="sect"><option value="">all sections</option></select></div>
+    <label class="frow" id="row-merges"><input type="checkbox" id="merges" checked> merges only</label>
     <button class="clearf" id="clearf">clear filters</button>
     <hr>
     <div class="fhead">GitHub status</div>
@@ -313,7 +354,7 @@ _PAGE = """<!doctype html>
 </div></div>
 
 <script>
-let DATA = [], sortKey = "section", sortDir = 1, pendingSect = null;
+let DATA = [], sortKey = "section", sortDir = 1, pendingSect = null, VIEW = "spec";
 const $ = s => document.querySelector(s);
 const esc = s => (s == null ? "" : String(s)).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -330,8 +371,10 @@ function nameCell(d) {
   return primary + extra;
 }
 
-const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), nack: new Set() };
-const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level }[kind]);
+const sel = { buckets: new Set(), states: new Set(), prstate: new Set(), level: new Set(), ready: new Set(), nack: new Set() };
+const selSet = kind => ({ state: sel.states, bucket: sel.buckets, prstate: sel.prstate, level: sel.level, ready: sel.ready, nack: sel.nack }[kind]);
+// A tested ACK (or two utACKs) and no NACK on an open PR — the "good to merge" set.
+const isReady = d => d.pr_state === "open" && d.review_level === 3 && !(d.nacks > 0);
 
 function setData(arr) {
   DATA = arr;
@@ -357,14 +400,25 @@ function fillGroup(id, items) {
   $(id).innerHTML = items.map(([kind, val, label, count, cls]) => chip(kind, val, label, count, cls)).join("");
 }
 
+function applyView() {
+  const prs = VIEW === "prs";  // raw PR list: disposition/section/active aren't meaningful
+  ["#wrap-state", "#wrap-bucket", "#wrap-sect", "#row-merges"].forEach(s => $(s).style.display = prs ? "none" : "");
+}
+
 function buildLegend() {
+  applyView();
   const merges = DATA.filter(d => d.kind === "merge");
   const act = merges.filter(d => d.active).length, cand = merges.length - act;
   const bc = tally(merges, "status_norm");
   const ps = tally(merges, "pr_state");
   const lv = tally(merges.filter(d => d.pr_state), "review_level");
-  $("#totals").textContent = `${merges.length} merges · ${act} active / ${cand} candidates`;
+  $("#totals").textContent = VIEW === "prs"
+    ? `${merges.length} open Knots PRs`
+    : `${merges.length} merges · ${act} active / ${cand} candidates`;
 
+  const ready = merges.filter(isReady).length, nacked = merges.filter(d => d.nacks > 0).length;
+  fillGroup("#g-quick", [["ready", "1", "✓ ready", ready, "st st-open"],
+                         ["nack", "1", "! NACK", nacked, "st st-closed"]]);
   fillGroup("#g-state", [["state", "active", "● active", act], ["state", "cand", "○ candidate", cand]]);
   fillGroup("#g-bucket", Object.keys(bc).sort((a, b) => bc[b] - bc[a]).map(b => ["bucket", b, b, bc[b], "n-" + b]));
 
@@ -393,7 +447,7 @@ function syncChips() {
 function applyFilter(spec) {
   Object.values(sel).forEach(s => s.clear());
   $("#q").value = ""; $("#sect").value = ""; $("#merges").checked = true;
-  for (const k of ["states", "prstate", "level", "buckets", "nack"])
+  for (const k of ["states", "prstate", "level", "buckets", "ready", "nack"])
     (spec[k] || []).forEach(v => sel[k].add(String(v)));
   syncChips(); render();
 }
@@ -404,15 +458,17 @@ function insights() {
   const n = s => known.filter(d => d.pr_state === s).length;
   const unrev = known.filter(d => !d.review_level).length;
   const nacked = known.filter(d => d.nacks > 0).length;
+  const ready = known.filter(isReady).length;
   const ins = (cls, label, f) => `<span class="ins ${cls}" data-f='${JSON.stringify(f)}'>${label}</span>`;
   $("#insights").innerHTML = cand.length ? [
-    `candidates: <b>${cand.length}</b>`,
+    `${VIEW === "prs" ? "open PRs" : "candidates"}: <b>${cand.length}</b>`,
     `status known: ${known.length}/${cand.length}`,
-    ins("merged", "merged upstream: " + n("merged"), { states: ["cand"], prstate: ["merged"] }),
-    ins("open", "open: " + n("open"), { states: ["cand"], prstate: ["open"] }),
-    ins("", "closed: " + n("closed"), { states: ["cand"], prstate: ["closed"] }),
-    ins("", "0 reviews: " + unrev, { states: ["cand"], level: ["0"] }),
-    nacked ? ins("nack", "NACKed: " + nacked, { states: ["cand"], nack: [1] }) : "",
+    ready ? ins("open", "ready to merge: " + ready, { ready: [1] }) : "",
+    VIEW === "prs" ? "" : ins("merged", "merged upstream: " + n("merged"), { states: ["cand"], prstate: ["merged"] }),
+    VIEW === "prs" ? "" : ins("open", "open: " + n("open"), { states: ["cand"], prstate: ["open"] }),
+    VIEW === "prs" ? "" : ins("", "closed: " + n("closed"), { states: ["cand"], prstate: ["closed"] }),
+    ins("", "0 reviews: " + unrev, { level: ["0"] }),
+    nacked ? ins("nack", "NACKed: " + nacked, { nack: [1] }) : "",
   ].filter(Boolean).join(" · ") : "";
   $("#insights").querySelectorAll("[data-f]").forEach(el =>
     el.onclick = () => applyFilter(JSON.parse(el.dataset.f)));
@@ -436,7 +492,8 @@ function saveState() {
       auto: $("#auto").checked, sortKey, sortDir,
       collapsed: document.body.classList.contains("panel-collapsed"),
       buckets: [...sel.buckets], states: [...sel.states],
-      prstate: [...sel.prstate], level: [...sel.level], nack: [...sel.nack],
+      prstate: [...sel.prstate], level: [...sel.level],
+      ready: [...sel.ready], nack: [...sel.nack],
     }));
   } catch (e) {}
 }
@@ -452,7 +509,7 @@ function restoreState() {
   if (st.sortKey) { sortKey = st.sortKey; sortDir = st.sortDir || 1; }
   sel.buckets = new Set(st.buckets || []); sel.states = new Set(st.states || []);
   sel.prstate = new Set(st.prstate || []); sel.level = new Set(st.level || []);
-  sel.nack = new Set(st.nack || []);
+  sel.ready = new Set(st.ready || []); sel.nack = new Set(st.nack || []);
   return st;
 }
 
@@ -473,6 +530,7 @@ function filtered() {
     if (sel.states.size && !sel.states.has(d.active ? "active" : "cand")) return false;
     if (sel.prstate.size && !sel.prstate.has(d.pr_state)) return false;
     if (sel.level.size && !sel.level.has(String(d.review_level))) return false;
+    if (sel.ready.size && !isReady(d)) return false;
     if (sel.nack.size && !(d.nacks > 0)) return false;
     if (q && !`${d.prnum||""} ${d.name||""} ${d.status||""} ${d.upstream||""} ${d.pr_title||""}`.toLowerCase().includes(q)) return false;
     return true;
@@ -634,10 +692,12 @@ async function loadSpecs(prefer) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     const prev = $("#spec").value;
-    $("#spec").innerHTML = j.specs.map(s => `<option>${esc(s)}</option>`).join("");
+    $("#spec").innerHTML = '<option value="__knots__">★ open Knots PRs</option>'
+      + j.specs.map(s => `<option>${esc(s)}</option>`).join("");
     const def = j.specs.find(s => s.includes("knots-next-29")) || j.specs.find(s => s.includes("next")) || j.specs[j.specs.length-1];
-    $("#spec").value = (prefer && j.specs.includes(prefer)) ? prefer
-      : (j.specs.includes(prev) ? prev : (def || ""));
+    const opts = ["__knots__", ...j.specs];
+    $("#spec").value = (prefer && opts.includes(prefer)) ? prefer
+      : (opts.includes(prev) ? prev : (def || ""));
     $("#status").textContent = "";
     loadEntries();
   } catch (e) { $("#status").textContent = "error: " + e.message; }
@@ -658,9 +718,23 @@ function loadUrl() {
 async function loadEntries() {
   const repo = $("#repo").value.trim(), ref = $("#ref").value.trim(), file = $("#spec").value;
   if (!file) return;
+  if (file === "__knots__") return loadKnots();
+  VIEW = "spec";
   $("#status").textContent = "loading " + file + "…";
   try {
     const r = await fetch(`/api/entries?repo=${encodeURIComponent(repo)}&ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(file)}`);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    setData(j.entries);
+    $("#status").textContent = "";
+  } catch (e) { $("#status").textContent = "error: " + e.message; }
+}
+
+async function loadKnots() {
+  VIEW = "prs";
+  $("#status").textContent = "loading open Knots PRs…";
+  try {
+    const r = await fetch("/api/knots-prs");
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     setData(j.entries);

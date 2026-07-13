@@ -52,6 +52,28 @@ def pr_url(prnum: str | None) -> str | None:
     return f"https://github.com/{r[0]}/pull/{r[1]}" if r else None
 
 
+def list_open_prs(repo: str) -> list[dict]:
+    """All open (non-draft) PRs in repo, slimmed to what the UI needs. One API
+    call per 100 PRs; honours GITHUB_TOKEN for rate limits. May raise RateLimited."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        prs = _get(f"{API}/repos/{repo}/pulls?state=open&per_page=100&page={page}")
+        for pr in prs:
+            if pr.get("draft"):
+                continue
+            out.append({
+                "num": pr["number"],
+                "title": pr.get("title"),
+                "updated_at": pr.get("updated_at"),
+                "labels": [lb["name"] for lb in pr.get("labels", [])],
+            })
+        if len(prs) < 100:
+            break
+        page += 1
+    return out
+
+
 def _token() -> str | None:
     global _token_cache
     if _token_cache is not None:
