@@ -65,9 +65,10 @@ python3 -m bosun.report --file knots-next-29.spec -o digest.md
 
 ## Daggy-fix helper (for the traditional-git model)
 
-For the proposed DAG-native Knots model, the core operation is: develop a fix on
-master, rebase it back to the oldest affected commit, then merge it forward into
-each live branch. This automates the two parts that aren't trivial:
+For the [proposed DAG-native Knots model](https://gist.github.com/chrisguida/65337b84ffb4acbd09aa5ba073b55d00),
+the core operation is: develop a fix on master, rebase it back to the oldest
+affected commit, then merge it forward into each live branch. This automates the
+two parts that aren't trivial:
 
 ```bash
 # Where do I rebase back to? Bisect to the bug-introducing commit using a
