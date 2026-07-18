@@ -24,6 +24,7 @@ import sys
 from dataclasses import dataclass, field
 
 from bosun.daggy import _git, _is_ancestor, _is_repo, merge_clean
+from bosun.github import resolve_pr
 
 
 def _rev_parse(repo, ref) -> str | None:
@@ -90,6 +91,27 @@ class Preflight:
         return "\n".join(lines)
 
 
+def fetch_pr_head(repo, pr_token, remote_url=None) -> tuple[str, str]:
+    """Fetch a PR's head commit into `repo` and return (sha, label).
+
+    Uses plain git against refs/pull/<n>/head, so it needs no API token and works
+    even if the contributor has no remotes set up for that fork. `remote_url`
+    overrides the derived GitHub URL (used by the tests to stay offline)."""
+    r = resolve_pr(pr_token)
+    if r is None:
+        raise ValueError(f"not a PR token: {pr_token!r} (expected e.g. 34093, k292, g899)")
+    gh_repo, num = r
+    url = remote_url or f"https://github.com/{gh_repo}"
+    res = _git(repo, "fetch", "--quiet", url, f"refs/pull/{num}/head", check=False)
+    if res.returncode != 0:
+        raise RuntimeError(f"could not fetch {gh_repo}#{num}: "
+                           f"{(res.stdout or '').strip() or 'fetch failed'}")
+    sha = _rev_parse(repo, "FETCH_HEAD")
+    if not sha:
+        raise RuntimeError(f"fetched {gh_repo}#{num} but FETCH_HEAD did not resolve")
+    return sha, f"{gh_repo}#{num}"
+
+
 def preflight(repo, branch, base, upstream="master") -> Preflight:
     pf = Preflight(base=base, branch=branch, upstream=upstream)
     if _rev_parse(repo, upstream) is None:
@@ -112,21 +134,32 @@ def _main() -> None:
 
     pf = sub.add_parser("preflight",
                         help="check a branch for poison + clean merge onto its base")
-    pf.add_argument("--branch", required=True, help="your feature branch")
+    who = pf.add_mutually_exclusive_group(required=True)
+    who.add_argument("--branch", help="your feature branch (a local ref)")
+    who.add_argument("--pr", help="a PR to fetch and check instead, e.g. k292, g899, 34093")
     pf.add_argument("--base", required=True,
                     help="the base it targets (a release tag or the dev branch)")
     pf.add_argument("--upstream", default="master",
                     help="upstream ref you must not merge in (default: master)")
+    pf.add_argument("--pr-url", dest="pr_url",
+                    help="override the git URL to fetch the PR from")
 
     args = ap.parse_args()
     if not _is_repo(args.repo):
         sys.exit(f"not a git repo: {args.repo}")
-    for ref in (args.branch, args.base):
+
+    branch, label = args.branch, args.branch
+    if args.pr:
+        try:
+            branch, label = fetch_pr_head(args.repo, args.pr, args.pr_url)
+        except (ValueError, RuntimeError) as e:
+            sys.exit(str(e))
+    for ref in (branch, args.base):
         if _rev_parse(args.repo, ref) is None:
             sys.exit(f"ref not found: {ref}")
 
-    result = preflight(args.repo, args.branch, args.base, args.upstream)
-    print(f"preflight: {args.branch} onto {args.base}")
+    result = preflight(args.repo, branch, args.base, args.upstream)
+    print(f"preflight: {label} onto {args.base}")
     print(result.report())
     sys.exit(0 if result.ready else 1)
 

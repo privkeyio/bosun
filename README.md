@@ -101,6 +101,12 @@ a maintainer to add it, catching the two things the assembler hard-rejects:
 ```bash
 python3 -m bosun.contributor -C /path/to/knots preflight \
     --branch my-fix --base v29.3.knots20260508 --upstream master
+
+# or check any PR by number. This fetches refs/pull/<n>/head straight over git,
+# so it needs no API token and no remotes configured for that fork.
+# (k = bitcoinknots/bitcoin, g = bitcoin-core/gui, bare number = bitcoin/bitcoin)
+python3 -m bosun.contributor -C /path/to/knots preflight \
+    --pr k292 --base v29.3.knots20260508 --upstream master
 ```
 
 - **poison**: an upstream branch merged *into* yours. The assembler dies
