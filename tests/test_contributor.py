@@ -10,6 +10,10 @@ cases it exists to catch:
   conflict      a branch that does not merge cleanly onto the base -> NOT READY
   upstream gone  --upstream ref missing -> poison unchecked, said clearly
 
+and the --pr path, which fetches refs/pull/<n>/head straight over git. That is
+exercised offline against a synthetic "remote" repo via --pr-url file://..., so
+the suite still needs no network.
+
 Run from the repo root:
 
     python3 tests/test_contributor.py
@@ -88,6 +92,27 @@ def _build(repo):
     git(repo, "checkout", "-q", "master")
 
 
+def _build_pr_remote(main_repo, remote):
+    """A clone of the main repo that publishes two PR heads the way GitHub does:
+
+        refs/pull/1/head   clean feature off base
+        refs/pull/2/head   feature off base with master merged in (poisoned)
+    """
+    subprocess.run(["git", "clone", "-q", main_repo, remote],
+                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    git(remote, "config", "user.email", "demo@bosun")
+    git(remote, "config", "user.name", "bosun-demo")
+
+    git(remote, "checkout", "-q", "-b", "pr-clean", "origin/base")
+    _write(remote, "pr1", "clean pr\n"); _commit(remote, "clean PR commit")
+    git(remote, "update-ref", "refs/pull/1/head", "HEAD")
+
+    git(remote, "checkout", "-q", "-b", "pr-poison", "origin/base")
+    _write(remote, "pr2", "poison pr\n"); _commit(remote, "PR commit")
+    git(remote, "merge", "-q", "--no-edit", "origin/master")   # pulls the poison in
+    git(remote, "update-ref", "refs/pull/2/head", "HEAD")
+
+
 def _case(repo, name, args, want_rc, want_substrs) -> bool:
     out, rc = preflight(repo, *args)
     print(f"== {name} ==")
@@ -100,8 +125,11 @@ def _case(repo, name, args, want_rc, want_substrs) -> bool:
 
 def main() -> None:
     repo = tempfile.mkdtemp(prefix="bosun-contrib-test-")
+    remote = tempfile.mkdtemp(prefix="bosun-contrib-remote-")
     try:
         _build(repo)
+        _build_pr_remote(repo, remote)
+        url = f"file://{remote}"
         results = [
             _case(repo, "clean -> READY",
                   ["preflight", "--branch", "feat-clean", "--base", "base"],
@@ -116,9 +144,19 @@ def main() -> None:
                   ["preflight", "--branch", "feat-clean", "--base", "base",
                    "--upstream", "no-such-ref"],
                   1, ["could not check for upstream merges", "NOT READY"]),
+            _case(repo, "--pr fetches a clean PR head -> READY",
+                  ["preflight", "--pr", "k1", "--pr-url", url, "--base", "base"],
+                  0, ["bitcoinknots/bitcoin#1", "✓ no upstream merged in", "READY:"]),
+            _case(repo, "--pr fetches a poisoned PR head -> NOT READY",
+                  ["preflight", "--pr", "k2", "--pr-url", url, "--base", "base"],
+                  1, ["bitcoinknots/bitcoin#2", "✗ upstream merged in", "NOT READY"]),
+            _case(repo, "--pr with a non-PR token -> clear error",
+                  ["preflight", "--pr", "nope", "--pr-url", url, "--base", "base"],
+                  1, ["not a PR token"]),
         ]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(remote, ignore_errors=True)
 
     if all(results):
         print("ALL PASS")
