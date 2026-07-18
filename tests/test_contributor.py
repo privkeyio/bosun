@@ -75,7 +75,10 @@ def _build(repo):
     _init(repo)
     _write(repo, "f", "orig\n"); a = _commit(repo, "A")
     git(repo, "checkout", "-q", "-b", "base", a)
-    _write(repo, "f", "BASE\n"); _commit(repo, "base edits f")
+    _write(repo, "f", "BASE\n")
+    for i in range(8):                      # 8 files a PR can collide with
+        _write(repo, f"c{i}", "BASE\n")
+    _commit(repo, "base edits f and adds c0..c7")
     git(repo, "checkout", "-q", "master")
     _write(repo, "other", "x\n"); _commit(repo, "C1 unrelated (master ahead of base)")
 
@@ -97,6 +100,8 @@ def _build_pr_remote(main_repo, remote):
 
         refs/pull/1/head   clean feature off base
         refs/pull/2/head   feature off base with master merged in (poisoned)
+        refs/pull/3/head   feature off the common ancestor that collides with
+                           base on 8 files (to exercise conflict truncation)
     """
     subprocess.run(["git", "clone", "-q", main_repo, remote],
                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -111,6 +116,12 @@ def _build_pr_remote(main_repo, remote):
     _write(remote, "pr2", "poison pr\n"); _commit(remote, "PR commit")
     git(remote, "merge", "-q", "--no-edit", "origin/master")   # pulls the poison in
     git(remote, "update-ref", "refs/pull/2/head", "HEAD")
+
+    git(remote, "checkout", "-q", "-b", "pr-conflict", "origin/base~1")
+    for i in range(8):
+        _write(remote, f"c{i}", "PR\n")     # same files as base, different content
+    _commit(remote, "PR collides with base on 8 files")
+    git(remote, "update-ref", "refs/pull/3/head", "HEAD")
 
 
 def _case(repo, name, args, want_rc, want_substrs) -> bool:
@@ -159,6 +170,12 @@ def main() -> None:
             _case(repo, "preflight-all reports an unfetchable PR without aborting",
                   ["preflight-all", "--prs", "1,999", "--pr-url", url, "--base", "base"],
                   1, ["✓ k1: ready", "? k999:", "1/2 ready"]),
+            _case(repo, "preflight-all truncates a huge conflict list",
+                  ["preflight-all", "--prs", "3", "--pr-url", url, "--base", "base"],
+                  1, ["✗ k3: conflicts:", "+3 more"]),
+            _case(repo, "preflight-all exits 0 when everything is ready",
+                  ["preflight-all", "--prs", "1", "--pr-url", url, "--base", "base"],
+                  0, ["✓ k1: ready", "1/1 ready"]),
         ]
     finally:
         shutil.rmtree(repo, ignore_errors=True)

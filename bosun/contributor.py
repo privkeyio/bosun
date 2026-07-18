@@ -206,7 +206,11 @@ def _main() -> None:
                 if row.get("poisoned"):
                     why.append(f"poisoned ({row['poison'][:10]})")
                 if not row.get("clean"):
-                    why.append("conflicts: " + (", ".join(row["conflicts"]) or "merge failed"))
+                    files = row["conflicts"]
+                    shown = ", ".join(files[:5])
+                    if len(files) > 5:
+                        shown += f", +{len(files) - 5} more"
+                    why.append("conflicts: " + (shown or "merge failed"))
                 if row.get("upstream_absent"):
                     why.append("upstream ref missing")
                 print(f"  ✗ {row['pr']}: {'; '.join(why)}")
