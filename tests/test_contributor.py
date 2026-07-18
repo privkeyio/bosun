@@ -153,6 +153,12 @@ def main() -> None:
             _case(repo, "--pr with a non-PR token -> clear error",
                   ["preflight", "--pr", "nope", "--pr-url", url, "--base", "base"],
                   1, ["not a PR token"]),
+            _case(repo, "preflight-all batches a set of PRs",
+                  ["preflight-all", "--prs", "1,2", "--pr-url", url, "--base", "base"],
+                  1, ["✓ k1: ready", "✗ k2: poisoned", "1/2 ready"]),
+            _case(repo, "preflight-all reports an unfetchable PR without aborting",
+                  ["preflight-all", "--prs", "1,999", "--pr-url", url, "--base", "base"],
+                  1, ["✓ k1: ready", "? k999:", "1/2 ready"]),
         ]
     finally:
         shutil.rmtree(repo, ignore_errors=True)

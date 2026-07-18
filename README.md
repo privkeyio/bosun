@@ -118,6 +118,18 @@ It prints READY / NOT READY with the fix for each and exits 0/1, so it is usable
 in a script or CI. Read-only: the merge test runs in a throwaway worktree, so
 your working tree is never touched.
 
+The same check runs in batch over every open PR, which answers the maintainer's
+question of which ones will not assemble onto the next base:
+
+```bash
+python3 -m bosun.contributor -C /path/to/knots preflight-all \
+    --base v29.3.knots20260508 --upstream master --json preflight.json
+```
+
+One line per PR plus an `N/M ready` summary; a PR that cannot be fetched is
+reported and the batch continues. `--json` writes the structured results, and
+`--prs 292,297` checks an explicit set instead of listing open ones.
+
 ```bash
 python3 tests/test_contributor.py
 ```
