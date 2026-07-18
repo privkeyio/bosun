@@ -29,10 +29,12 @@ jobs:
         run: ruff check --select E9,F bosun scripts tests
 
       - name: Imports
-        run: python -c "import bosun.web, bosun.static_build, bosun.spec, bosun.source, bosun.github, bosun.ack, bosun.suggest, bosun.report, bosun.daggy"
+        run: python -c "import bosun.web, bosun.static_build, bosun.spec, bosun.source, bosun.github, bosun.ack, bosun.suggest, bosun.report, bosun.daggy, bosun.contributor"
 
       - name: Unit tests
-        run: python tests/test_daggy.py
+        run: |
+          python tests/test_daggy.py
+          python tests/test_contributor.py
 
       - name: Static build smoke test
         # Run WITH a token in the env (as the deploy does) but WITHOUT --ingest,
