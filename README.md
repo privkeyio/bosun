@@ -8,8 +8,8 @@ queryable view and pairs it with live PR state and review level from GitHub, so
 you can see at a glance where each PR stands across `bitcoin/bitcoin`,
 `bitcoin-core/gui`, `bitcoinknots/bitcoin`, and any fork.
 
-The core (`spec` / `source` / `github` / `ack` / `suggest` / `report` / `daggy`)
-is pure stdlib; only the web UI needs Flask.
+The core (`spec` / `source` / `github` / `ack` / `suggest` / `report` / `daggy` /
+`contributor`) is pure stdlib; only the web UI needs Flask.
 
 Live instance: <https://bosun.privkey.io>
 
@@ -89,6 +89,31 @@ See it work on a synthetic repo (no network, no Core build):
 
 ```bash
 python3 tests/test_daggy.py
+```
+
+## Contributor preflight (will the assembler accept my branch?)
+
+Knots is not merged, it is assembled: a release replays a spec that checks out a
+base and merges a curated set of branches on top. A change only lands if its
+branch is something the assembler can replay, so this checks that before you ask
+a maintainer to add it, catching the two things the assembler hard-rejects:
+
+```bash
+python3 -m bosun.contributor -C /path/to/knots preflight \
+    --branch my-fix --base v29.3.knots20260508 --upstream master
+```
+
+- **poison**: an upstream branch merged *into* yours. The assembler dies
+  `Branch <x> is poisoned`. Fix: rebase onto the base, do not merge upstream in.
+- **conflict**: your branch does not merge cleanly onto the base, so someone
+  would have to hand-maintain a resolution diff.
+
+It prints READY / NOT READY with the fix for each and exits 0/1, so it is usable
+in a script or CI. Read-only: the merge test runs in a throwaway worktree, so
+your working tree is never touched.
+
+```bash
+python3 tests/test_contributor.py
 ```
 
 ## CLI (pure stdlib, no install)
