@@ -124,6 +124,32 @@ def preflight(repo, branch, base, upstream="master") -> Preflight:
     return pf
 
 
+def preflight_all(repo, base, upstream="master", prs=None,
+                  gh_repo="bitcoinknots/bitcoin", prefix="k", remote_url=None):
+    """Preflight a set of PRs against one base. Yields a result dict per PR.
+
+    `prs` is a list of PR numbers; if None they are fetched from GitHub (open,
+    non-draft). A PR that cannot be fetched is reported rather than aborting the
+    run, so one dead ref does not kill a batch."""
+    if prs is None:
+        from bosun.github import list_open_prs
+        prs = [p["num"] for p in list_open_prs(gh_repo)]
+    for num in prs:
+        token = f"{prefix}{num}"
+        row = {"pr": token, "repo": gh_repo, "num": num}
+        try:
+            sha, label = fetch_pr_head(repo, token, remote_url)
+        except (ValueError, RuntimeError) as e:
+            row.update(error=str(e), ready=False)
+            yield row
+            continue
+        r = preflight(repo, sha, base, upstream)
+        row.update(label=label, ready=r.ready, poisoned=r.poisoned,
+                   poison=r.poison, clean=r.clean, conflicts=r.conflicts,
+                   upstream_absent=r.upstream_absent)
+        yield row
+
+
 def _main() -> None:
     import argparse
     ap = argparse.ArgumentParser(
@@ -144,9 +170,58 @@ def _main() -> None:
     pf.add_argument("--pr-url", dest="pr_url",
                     help="override the git URL to fetch the PR from")
 
+    pa = sub.add_parser("preflight-all",
+                        help="preflight every open PR against one base")
+    pa.add_argument("--base", required=True, help="the base they target")
+    pa.add_argument("--upstream", default="master",
+                    help="upstream ref they must not merge in (default: master)")
+    pa.add_argument("--gh-repo", dest="gh_repo", default="bitcoinknots/bitcoin",
+                    help="repo to list open PRs from (default: bitcoinknots/bitcoin)")
+    pa.add_argument("--prefix", default="k",
+                    help="PR token prefix for that repo (default: k)")
+    pa.add_argument("--prs", help="comma-separated PR numbers instead of listing open ones")
+    pa.add_argument("--pr-url", dest="pr_url",
+                    help="override the git URL to fetch PRs from")
+    pa.add_argument("--json", dest="json_out", help="also write results as JSON here")
+
     args = ap.parse_args()
     if not _is_repo(args.repo):
         sys.exit(f"not a git repo: {args.repo}")
+
+    if args.cmd == "preflight-all":
+        if _rev_parse(args.repo, args.base) is None:
+            sys.exit(f"ref not found: {args.base}")
+        nums = [int(n) for n in args.prs.split(",")] if args.prs else None
+        rows = []
+        print(f"preflight-all: open PRs onto {args.base}")
+        for row in preflight_all(args.repo, args.base, args.upstream, nums,
+                                 args.gh_repo, args.prefix, args.pr_url):
+            rows.append(row)
+            if row.get("error"):
+                print(f"  ? {row['pr']}: {row['error']}")
+            elif row["ready"]:
+                print(f"  ✓ {row['pr']}: ready")
+            else:
+                why = []
+                if row.get("poisoned"):
+                    why.append(f"poisoned ({row['poison'][:10]})")
+                if not row.get("clean"):
+                    files = row["conflicts"]
+                    shown = ", ".join(files[:5])
+                    if len(files) > 5:
+                        shown += f", +{len(files) - 5} more"
+                    why.append("conflicts: " + (shown or "merge failed"))
+                if row.get("upstream_absent"):
+                    why.append("upstream ref missing")
+                print(f"  ✗ {row['pr']}: {'; '.join(why)}")
+        ready = sum(1 for r in rows if r.get("ready"))
+        print(f"{ready}/{len(rows)} ready")
+        if args.json_out:
+            import json
+            with open(args.json_out, "w") as f:
+                json.dump(rows, f, indent=1)
+            print(f"wrote {args.json_out}")
+        sys.exit(0 if ready == len(rows) else 1)
 
     branch, label = args.branch, args.branch
     if args.pr:
