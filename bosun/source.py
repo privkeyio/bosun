@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import urllib.error
 import urllib.request
 
 API = "https://api.github.com"
@@ -27,8 +29,20 @@ def _get(url: str, accept: str, auth: bool = True) -> bytes:
     # fetching another owner's public spec). The API call still needs the token.
     if auth and token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read()
+    # GitHub occasionally resets the connection mid-handshake; a scheduled build
+    # must not die on one flake. Retry transient failures only (never a 4xx).
+    delay = 1
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.read()
+        except (urllib.error.URLError, TimeoutError) as e:
+            code = getattr(e, "code", None)
+            if delay > 2 or (code is not None and code < 500):
+                raise
+            print(f"transient fetch error ({e}); retrying {url}")
+            time.sleep(delay)
+            delay *= 2
 
 
 def list_specs(repo: str, ref: str) -> list[str]:
